@@ -21,6 +21,12 @@ final class PhotoLibraryService: NSObject {
 
     let cachingManager = PHCachingImageManager()
 
+    /// F8.3 (T3): how many embedding fetches needed an iCloud download. The
+    /// progress handler runs on a PhotoKit background queue, so the counters
+    /// are lock-protected rather than main-actor state.
+    private let iCloudFetches = ICloudFetchCounters()
+    var iCloudFetchCounts: (needed: Int, total: Int) { iCloudFetches.snapshot }
+
     /// Members of the system "Selfies" album; rebuilt after library changes.
     @ObservationIgnored private var cachedSelfieIDs: Set<String>?
 
@@ -144,10 +150,16 @@ final class PhotoLibraryService: NSObject {
                                   contentMode: .aspectFit)
     }
 
-    /// Embedding input: 512px long edge (§2.1).
+    /// Embedding input: 512px long edge (§2.1). Counted for F8.3: the options'
+    /// progress handler fires only when PhotoKit actually downloads from iCloud.
     func embeddingImage(for id: String) async throws -> UIImage {
         guard let asset = asset(for: id) else { throw EmbeddingImageError.assetNotFound }
-        guard let image = await scaledImage(asset, longEdge: 512) else { throw EmbeddingImageError.imageUnavailable }
+        let counters = iCloudFetches
+        counters.recordRequested()
+        guard let image = await scaledImage(asset, longEdge: 512,
+                                            onCloudDownload: { counters.recordCloudDownload() }) else {
+            throw EmbeddingImageError.imageUnavailable
+        }
         return image
     }
 
@@ -168,12 +180,13 @@ final class PhotoLibraryService: NSObject {
         return images
     }
 
-    private func scaledImage(_ asset: PHAsset, longEdge: CGFloat) async -> UIImage? {
+    private func scaledImage(_ asset: PHAsset, longEdge: CGFloat,
+                             onCloudDownload: (@Sendable () -> Void)? = nil) async -> UIImage? {
         let w = CGFloat(asset.pixelWidth), h = CGFloat(asset.pixelHeight)
         let ratio = w > 0 && h > 0 ? min(longEdge / w, longEdge / h, 1) : 1
         let target = CGSize(width: max(1, (w * ratio).rounded()), height: max(1, (h * ratio).rounded()))
         return await requestImage(asset: asset, targetSize: target, deliveryMode: .highQualityFormat,
-                                  allowNetwork: true, contentMode: .aspectFit)
+                                  allowNetwork: true, contentMode: .aspectFit, onCloudDownload: onCloudDownload)
     }
 
     // MARK: - Library edits
@@ -214,13 +227,19 @@ final class PhotoLibraryService: NSObject {
     private func requestImage(asset: PHAsset, targetSize: CGSize,
                               deliveryMode: PHImageRequestOptionsDeliveryMode,
                               allowNetwork: Bool,
-                              contentMode: PHImageContentMode) async -> UIImage? {
+                              contentMode: PHImageContentMode,
+                              onCloudDownload: (@Sendable () -> Void)? = nil) async -> UIImage? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.deliveryMode = deliveryMode
             options.resizeMode = .fast
             options.isNetworkAccessAllowed = allowNetwork
             options.version = .current
+            // F8.3 (T3): PhotoKit only invokes this while fetching from iCloud;
+            // it never fires for locally available originals.
+            if let onCloudDownload {
+                options.progressHandler = { _, _, _, _ in onCloudDownload() }
+            }
             var resumed = false
             cachingManager.requestImage(for: asset, targetSize: targetSize,
                                         contentMode: contentMode, options: options) { image, info in
@@ -244,6 +263,28 @@ extension PhotoLibraryService: PHPhotoLibraryChangeObserver {
             self.onLibraryChange?(changeInstance)
             self.additionalChangeHandler?(changeInstance)
         }
+    }
+}
+
+/// F8.3 (T3): lock-protected counters — the PHImageRequestOptions progress
+/// handler that feeds them runs on a PhotoKit background queue, and Swift 6
+/// strict concurrency must see the mutation as safe from any thread.
+final class ICloudFetchCounters: @unchecked Sendable {
+    private let lock = NSLock()
+    private var needed = 0
+    private var total = 0
+
+    func recordRequested() {
+        lock.lock(); total += 1; lock.unlock()
+    }
+
+    func recordCloudDownload() {
+        lock.lock(); needed += 1; lock.unlock()
+    }
+
+    var snapshot: (needed: Int, total: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (needed, total)
     }
 }
 

@@ -13,6 +13,8 @@ struct EvaluationView: View {
     @State private var labeling: String?
     @State private var export: ExportFile?
     @State private var error: String?
+    /// F8.3 (T3): embedding fetches that needed an iCloud download (G3 的依据).
+    @State private var iCloudCounts: (needed: Int, total: Int) = (0, 0)
 
     var body: some View {
         List {
@@ -46,6 +48,9 @@ struct EvaluationView: View {
                 if let report {
                     LabeledContent("Recall@10", value: String(format: "%.3f", report.recallAt10))
                     LabeledContent("MRR", value: String(format: "%.3f", report.mrr))
+                    // T3: 临时, 供 G2 决策, T9 删除。
+                    LabeledContent("Recall@10(不含文字)", value: String(format: "%.3f", report.noTextRecallAt10))
+                    LabeledContent("MRR(不含文字)", value: String(format: "%.3f", report.noTextMRR))
                     LabeledContent("搜索延迟 P50 / P95",
                                    value: String(format: "%.0f / %.0f ms", report.latencyP50 * 1000, report.latencyP95 * 1000))
                     ForEach(report.queries, id: \.query) { item in
@@ -61,6 +66,12 @@ struct EvaluationView: View {
                                    value: String(format: "%.0f / %.0f / %.0f ms",
                                                  durations.reduce(0, +) / Double(durations.count) * 1000,
                                                  percentile(durations, 0.5) * 1000, percentile(durations, 0.95) * 1000))
+                }
+                // F8.3 (T3): counted since launch, updated when anything above runs.
+                if iCloudCounts.total > 0 {
+                    LabeledContent("iCloud 取图", value: "需要下载 \(iCloudCounts.needed) / 共 \(iCloudCounts.total) 张")
+                } else {
+                    Text("iCloud 取图:还没有取图数据").font(.footnote).foregroundStyle(.secondary)
                 }
             }
 
@@ -92,6 +103,7 @@ struct EvaluationView: View {
             LabelingView(query: target.query, labels: $labels)
         }
         .sheet(item: $export) { ShareSheet(items: [$0.url]) }
+        .onAppear { refreshICloudCounts() }
         .alert("评测失败", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("好", role: .cancel) {}
         } message: {
@@ -117,24 +129,37 @@ struct EvaluationView: View {
         var latencies: [Double] = []
         do {
             for label in labels.items where !label.relevant.isEmpty {
-                let (ids, seconds) = try await model.rankForEvaluation(label.query)
+                let (ids, idsWithoutText, seconds) = try await model.rankForEvaluation(label.query)
                 latencies.append(seconds)
                 let relevant = Set(label.relevant)
-                let hits = ids.prefix(10).filter(relevant.contains).count
-                let rank = ids.firstIndex(where: relevant.contains).map { $0 + 1 }
-                results.append(.init(query: label.query, recallAt10: Double(hits) / Double(relevant.count),
-                                     reciprocalRank: rank.map { 1 / Double($0) } ?? 0, latency: seconds))
+                func hitsAndRank(_ ranked: [String]) -> (hits: Int, rank: Int?) {
+                    let hits = ranked.prefix(10).filter(relevant.contains).count
+                    let rank = ranked.firstIndex(where: relevant.contains).map { $0 + 1 }
+                    return (hits, rank)
+                }
+                let withText = hitsAndRank(ids)
+                let withoutText = hitsAndRank(idsWithoutText)
+                results.append(.init(query: label.query,
+                                     recallAt10: Double(withText.hits) / Double(relevant.count),
+                                     reciprocalRank: withText.rank.map { 1 / Double($0) } ?? 0,
+                                     noTextRecallAt10: Double(withoutText.hits) / Double(relevant.count),
+                                     noTextReciprocalRank: withoutText.rank.map { 1 / Double($0) } ?? 0,
+                                     latency: seconds))
             }
         } catch {
             self.error = error.localizedDescription
             return
         }
+        let count = Double(max(results.count, 1))
         report = EvaluationReport(
             queries: results,
-            recallAt10: results.map(\.recallAt10).reduce(0, +) / Double(max(results.count, 1)),
-            mrr: results.map(\.reciprocalRank).reduce(0, +) / Double(max(results.count, 1)),
+            recallAt10: results.map(\.recallAt10).reduce(0, +) / count,
+            mrr: results.map(\.reciprocalRank).reduce(0, +) / count,
+            noTextRecallAt10: results.map(\.noTextRecallAt10).reduce(0, +) / count,
+            noTextMRR: results.map(\.noTextReciprocalRank).reduce(0, +) / count,
             latencyP50: percentile(latencies, 0.5),
             latencyP95: percentile(latencies, 0.95))
+        refreshICloudCounts()
     }
 
     private func runConsistency() async {
@@ -145,6 +170,11 @@ struct EvaluationView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        refreshICloudCounts()
+    }
+
+    private func refreshICloudCounts() {
+        iCloudCounts = model.photoService.iCloudFetchCounts
     }
 
     private func percentile(_ values: [Double], _ p: Double) -> Double {
@@ -270,11 +300,17 @@ struct EvaluationReport: Codable {
         let query: String
         let recallAt10: Double
         let reciprocalRank: Double
+        /// T3: 临时, 供 G2 决策, T9 删除 — same query ranked without text matches.
+        let noTextRecallAt10: Double
+        let noTextReciprocalRank: Double
         let latency: Double
     }
     let queries: [Query]
     let recallAt10: Double
     let mrr: Double
+    /// T3: 临时, 供 G2 决策, T9 删除 — aggregates over the no-text ranking.
+    let noTextRecallAt10: Double
+    let noTextMRR: Double
     let latencyP50: Double
     let latencyP95: Double
 }
@@ -318,14 +354,17 @@ struct EvaluationLabels {
 
 extension AppModel {
     /// Same ranking as the search bar, without filters; returns ids and the
-    /// end-to-end time (text embedding + scan).
-    func rankForEvaluation(_ query: String) async throws -> (ids: [String], seconds: Double) {
+    /// end-to-end time (text embedding + scan). Also returns a second ranking
+    /// that ignores text matches (T3: 临时, 供 G2 决策, T9 删除) — it runs
+    /// outside the timed section so latency stays comparable.
+    func rankForEvaluation(_ query: String) async throws -> (ids: [String], idsWithoutText: [String], seconds: Double) {
         let start = ContinuousClock.now
         let vector = try await engine.embedText(query, dimension: dimension)
         let rows = try await store.searchRows()
         let hits = SearchEngine.rank(query: vector, text: query, rows: rows, k: 60)
         let elapsed = ContinuousClock.now - start
-        return (hits.map(\.id),
+        let hitsWithoutText = SearchEngine.rank(query: vector, text: "", rows: rows, k: 60)
+        return (hits.map(\.id), hitsWithoutText.map(\.id),
                 Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
     }
 
