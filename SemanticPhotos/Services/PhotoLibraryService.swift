@@ -3,8 +3,8 @@ import Photos
 import UIKit
 
 /// PhotoKit access layer: authorization, asset fetching, scaled images for
-/// embedding / text recognition / sharing, cached metadata (A0), library edits
-/// (favorite, delete, albums) and the library-change observer (F5).
+/// embedding / text recognition / sharing, cached metadata (A0), album creation
+/// (F4.11) and the library-change observer (F5).
 @MainActor
 @Observable
 final class PhotoLibraryService: NSObject {
@@ -189,30 +189,9 @@ final class PhotoLibraryService: NSObject {
                                   allowNetwork: true, contentMode: .aspectFit, onCloudDownload: onCloudDownload)
     }
 
-    // MARK: - Library edits
+    // MARK: - Albums
     // PhotoKit runs change blocks on its own queue: written in this @MainActor
     // type they'd be inferred main-actor isolated and trap at run time, hence @Sendable.
-
-    /// Writes the favorite flag back to the system library (F3.5.2).
-    func setFavorite(_ favorite: Bool, for id: String) async throws {
-        try await PHPhotoLibrary.shared().performChanges { @Sendable in
-            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { return }
-            PHAssetChangeRequest(for: asset).isFavorite = favorite
-        }
-    }
-
-    /// Deletes from the library behind the system confirmation (F2.7).
-    /// Returns false when the user declines.
-    func deleteFromLibrary(_ ids: [String]) async throws -> Bool {
-        do {
-            try await PHPhotoLibrary.shared().performChanges { @Sendable in
-                PHAssetChangeRequest.deleteAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
-            }
-            return true
-        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError {
-            return false
-        }
-    }
 
     /// Creates an album holding the photos (F4.11).
     func saveAlbum(named title: String, ids: [String]) async throws {

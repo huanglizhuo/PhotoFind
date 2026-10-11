@@ -22,6 +22,7 @@ struct PrivacyView: View {
                 point("iphone", "数据不出设备", "照片、向量、识别出的文字和搜索记录只保存在本机,不上传。")
                 point("wifi.slash", "完全不联网", "地点名称来自内置的离线城市库。")
                 point("chart.bar.xaxis", "不收集任何数据", "没有统计和埋点。App Store 隐私标签为\u{201C}未收集数据\u{201D}。")
+                point("eye.slash", "可以排除照片", "不想被搜到的照片,加入系统相册的\u{201C}已隐藏\u{201D}相簿即可。")
                 point("trash", "随时可以清除", "删除 App 即删除全部索引;照片本身留在系统相册,不受影响。")
             }
         }

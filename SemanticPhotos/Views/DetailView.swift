@@ -2,8 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Full-screen photo browser (F0.3 / F3.5): page through photos with pinch and
-/// double-tap zoom; capture time and place; favorite, share, find similar,
-/// remove from search or delete from the library.
+/// double-tap zoom; capture time and place; share and find similar (F3.5.2).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -26,7 +25,7 @@ struct DetailView: View {
     }
 
     var body: some View {
-        // Fresh metadata (favorite) from the model, not the paging snapshot.
+        // Fresh metadata from the model, not the paging snapshot.
         let current = model.photo(currentID)
         ZStack {
             Color.black.ignoresSafeArea()
@@ -45,25 +44,9 @@ struct DetailView: View {
                     circleButton("xmark", label: "关闭") { dismiss() }
                     Spacer()
                     if let current {
-                        circleButton(current.meta.isFavorite ? "heart.fill" : "heart",
-                                     label: current.meta.isFavorite ? "取消收藏" : "收藏") {
-                            model.setFavorite(!current.meta.isFavorite, for: current.id)
-                        }
                         circleButton(preparingShare ? "hourglass" : "square.and.arrow.up", label: "分享") {
                             share(current.id)
                         }
-                        Menu {
-                            Button("从搜索中移除", systemImage: "eye.slash") { remove(current.id) }
-                            Button("从相册删除", systemImage: "trash", role: .destructive) {
-                                Task { await deleteFromLibrary(current.id) }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("更多")
                     }
                 }
                 .padding(.horizontal, 20)
@@ -136,31 +119,6 @@ struct DetailView: View {
             preparingShare = false
             if !images.isEmpty { shareItems = ShareItems(images: images) }
         }
-    }
-
-    /// Moves to a neighbour before the photo leaves the list, or closes.
-    private func remove(_ id: String) {
-        advance(from: id)
-        model.removeFromIndex([id])
-    }
-
-    private func deleteFromLibrary(_ id: String) async {
-        let neighbour = neighbour(of: id)
-        await model.deleteFromLibrary([id])
-        if model.photo(id) == nil {
-            if let neighbour { currentID = neighbour } else { dismiss() }
-        }
-    }
-
-    private func advance(from id: String) {
-        if let next = neighbour(of: id) { currentID = next } else { dismiss() }
-    }
-
-    private func neighbour(of id: String) -> String? {
-        let ids = items.map(\.id)
-        guard let index = ids.firstIndex(of: id) else { return nil }
-        if index + 1 < ids.count { return ids[index + 1] }
-        return index > 0 ? ids[index - 1] : nil
     }
 }
 

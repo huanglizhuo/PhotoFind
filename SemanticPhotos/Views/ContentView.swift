@@ -127,14 +127,6 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if let results = model.searchResults, !results.isEmpty {
-                    Button {
-                        albumPrompt = AlbumPrompt(name: model.searchText.isEmpty ? (model.searchTitle ?? "搜索结果") : model.searchText,
-                                                  ids: results.map(\.id))
-                    } label: {
-                        Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
-                    }
-                }
                 // F0.8: the on-device promise, one tap away.
                 Button { showPrivacy = true } label: {
                     Label("仅本机处理", systemImage: "lock.shield")
@@ -158,13 +150,6 @@ struct ContentView: View {
                 albumPrompt = AlbumPrompt(name: "精选照片", ids: ids)
             } label: {
                 Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
-            }
-            Button(role: .destructive) {
-                model.removeFromIndex(ids)
-                self.selection = []
-                show("已从搜索中移除 \(ids.count) 张")
-            } label: {
-                Label("移除", systemImage: "eye.slash")
             }
         }
         .font(.footnote.weight(.medium))

@@ -68,34 +68,12 @@ final class SemanticPhotosUITests: XCTestCase {
         try requireModel()
         grid.cells.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["收藏"].exists || app.buttons["取消收藏"].exists)
         XCTAssertTrue(app.buttons["分享"].exists)
-        XCTAssertTrue(app.buttons["更多"].exists)
         app.buttons["相似"].tap()
         // F4.9: results replace the grid, titled 相似照片, with the clear button.
         XCTAssertTrue(app.buttons["xmark.circle.fill"].waitForExistence(timeout: 10))
         XCTAssertEqual(searchField.placeholderValue, "相似照片")
         app.buttons["xmark.circle.fill"].tap()
-    }
-
-    /// F3.5.2: favorite writes back to the library and survives a round trip.
-    /// (A PhotoKit change block inferred as main-actor isolated used to trap here.)
-    func testFavoriteRoundTrip() throws {
-        try requireIndexedPhotos()
-        grid.cells.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        // The library grid (with its 收藏 filter chip) stays in the tree under the cover.
-        func visible(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { $0.isHittable }
-        }
-        let start = visible("取消收藏") != nil ? "取消收藏" : "收藏"
-        let other = start == "收藏" ? "取消收藏" : "收藏"
-        visible(start)?.tap()
-        XCTAssertTrue(app.buttons[other].waitForExistence(timeout: 5))
-        visible(other)?.tap()
-        sleep(1)
-        XCTAssertNotNil(visible(start), "收藏状态应恢复")
-        XCTAssertEqual(app.state, .runningForeground)
     }
 
     // MARK: - Search (F4)
@@ -202,7 +180,7 @@ final class SemanticPhotosUITests: XCTestCase {
         grid.cells.element(boundBy: 1).tap()
         XCTAssertTrue(app.navigationBars["已选择 2 张"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["存为相簿"].exists)
-        XCTAssertTrue(app.buttons["移除"].exists)
+        XCTAssertTrue(app.buttons["分享"].exists)
         XCTAssertFalse(detailOpen, "多选模式下点照片是选择,不是打开")
         app.buttons["完成"].tap()
     }
