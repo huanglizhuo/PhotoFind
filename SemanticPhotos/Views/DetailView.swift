@@ -22,7 +22,7 @@ struct DetailView: View {
             let byID = Dictionary(uniqueKeysWithValues: model.photos.map { ($0.id, $0) })
             return photoIDs.compactMap { byID[$0] }
         }
-        return model.searchResults?.map(\.photo) ?? model.visiblePhotos
+        return model.searchResults?.map(\.photo) ?? model.photos
     }
 
     var body: some View {

@@ -22,9 +22,9 @@ struct ContentView: View {
         model.pipeline.hasWork
     }
 
-    /// Photos the grid shows right now (results or the filtered library).
+    /// Photos the grid shows right now (results or the whole library).
     private var shownIDs: [String] {
-        model.searchResults?.map(\.id) ?? model.visiblePhotos.map(\.id)
+        model.searchResults?.map(\.id) ?? model.photos.map(\.id)
     }
 
     var body: some View {
@@ -58,9 +58,6 @@ struct ContentView: View {
                         if showPill {
                             ProgressPill()
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                        if !model.photos.isEmpty {
-                            FilterBarView()
                         }
                         SearchBarView()
                     }

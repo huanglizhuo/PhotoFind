@@ -3,7 +3,7 @@ import Photos
 import SwiftUI
 
 /// Central app state: owns services, the indexed photo list, search mode,
-/// filters, settings, background indexing and the F5 photo-library sync logic.
+/// settings, background indexing and the F5 photo-library sync logic.
 @MainActor
 @Observable
 final class AppModel {
@@ -31,13 +31,6 @@ final class AppModel {
     private(set) var photos: [IndexedPhoto] = []
     var gridColumns: Int {
         didSet { UserDefaults.standard.set(gridColumns, forKey: "gridColumns") }
-    }
-    /// Filter bar (F4.8); applies to browsing and to search candidates.
-    var filter = PhotoFilter() {
-        didSet { if filter != oldValue, searchResults != nil, searchTitle == nil { performSearch() } }
-    }
-    var visiblePhotos: [IndexedPhoto] {
-        filter.isActive ? photos.filter { filter.matches($0) } : photos
     }
 
     // Search
@@ -407,7 +400,6 @@ final class AppModel {
         isSearching = true
         searchError = nil
         searchTitle = nil
-        let allowed = filter.isActive ? Set(visiblePhotos.map(\.id)) : nil
         searchTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -423,7 +415,7 @@ final class AppModel {
                 // A Siri search can cold-launch the app before the photo list loads.
                 if self.photos.isEmpty { await self.reloadIndex() }
                 guard !Task.isCancelled else { return }
-                self.show(SearchEngine.rank(query: queryVector, text: query, rows: rows, allowed: allowed, k: 60))
+                self.show(SearchEngine.rank(query: queryVector, text: query, rows: rows, k: 60))
             } catch {
                 if !Task.isCancelled { self.searchError = error.localizedDescription }
             }
@@ -511,25 +503,6 @@ final class AppModel {
               let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
         try? FileManager.default.removeItem(at: url)
         showSimilar(toImage: image)
-    }
-
-    // MARK: - Places (F4.8)
-
-    /// Cities and countries present in the index, most photos first.
-    func placeOptions() -> (cities: [(place: CityDatabase.Place, count: Int)], countries: [(code: String, count: Int)]) {
-        var cityCounts: [Int: Int] = [:]
-        for photo in photos {
-            if let city = photo.meta.cityID, (photo.meta.cityKm ?? .infinity) <= 100 { cityCounts[city, default: 0] += 1 }
-        }
-        var countryCounts: [String: Int] = [:]
-        var cities: [(place: CityDatabase.Place, count: Int)] = []
-        for (id, count) in cityCounts {
-            guard let place = CityDatabase.shared.place(id: id) else { continue }
-            cities.append((place, count))
-            countryCounts[place.country, default: 0] += count
-        }
-        return (cities.sorted { $0.count > $1.count },
-                countryCounts.map { ($0.key, $0.value) }.sorted { $0.count > $1.count })
     }
 
     // MARK: - Index consistency (F4.6)

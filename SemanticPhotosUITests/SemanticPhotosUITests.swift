@@ -137,25 +137,42 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["xmark.circle.fill"].tap()
     }
 
-    /// F3.5.1 / F4.8: pick a city in the place filter, then its name shows in the detail page.
-    func testPlaceFilterAndPlaceInDetail() throws {
+    /// F3.5.1 (T8): the place filter is gone, but photos with coordinates still
+    /// show their city (displayName always joins parts with " · ") in the detail
+    /// page. Opens the photos one by one until one shows a place; skips if none.
+    /// The grid only realizes visible cells, detail pages don't respond to a
+    /// plain swipe, and rows under the navigation bar / search capsule can't
+    /// take a tap — so this walks the grid in partial scrolls, opening only the
+    /// cells whose upper quarter (the tap point) sits in the clear band.
+    func testPlaceShownInDetail() throws {
         try requireIndexedPhotos()
-        app.buttons["地点"].tap()
-        XCTAssertTrue(app.navigationBars["地点"].waitForExistence(timeout: 5))
-        let cities = app.collectionViews.buttons.allElementsBoundByIndex.filter { $0.label != "不限地点" }
-        guard let city = cities.first else {
-            app.buttons["完成"].tap()
-            throw XCTSkip("已索引的照片里没有带位置的")
+        let place = app.staticTexts.matching(NSPredicate(format: "label CONTAINS ' · '")).firstMatch
+        let chromeTop = CGFloat(110)
+        let chromeBottom = searchField.frame.minY - 20
+        var settledTop = CGFloat(-1)
+        var swipes = 0
+        while swipes <= 30 {
+            for cell in grid.cells.allElementsBoundByIndex where cell.isHittable {
+                let tapY = cell.frame.minY + cell.frame.height * 0.25
+                guard tapY > chromeTop, tapY < chromeBottom else { continue }
+                cell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+                XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+                let found = place.exists
+                app.buttons["关闭"].tap()
+                if found { return }
+            }
+            let top = grid.cells.firstMatch.frame.minY
+            if top == settledTop { break }  // grid can't scroll any further
+            settledTop = top
+            // A partial, slow drag: rows step through the clear band instead of
+            // flinging past rows a full-screen swipe would skip.
+            grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+                .press(forDuration: 0.05, thenDragTo: grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                       withVelocity: XCUIGestureVelocity(150), thenHoldForDuration: 0)
+            swipes += 1
+            sleep(1)
         }
-        let cityName = city.staticTexts.firstMatch.label
-        city.tap()
-        XCTAssertTrue(grid.cells.firstMatch.waitForExistence(timeout: 5))
-        grid.cells.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", cityName)).firstMatch.exists,
-                      "大图页应显示 \(cityName)")
-        app.buttons["关闭"].tap()
-        app.buttons["清除"].tap()
+        throw XCTSkip("已索引的照片里没有带地名的")
     }
 
     // MARK: - Overlays never leak taps to the UIKit grid
@@ -173,27 +190,7 @@ final class SemanticPhotosUITests: XCTestCase {
         }
     }
 
-    // MARK: - Filters (F4.8) and selection (F4.11)
-
-    func testFavoriteFilterAndClear() throws {
-        try requireIndexedPhotos()
-        let all = grid.cells.count
-        app.buttons["收藏"].tap()
-        sleep(1)
-        XCTAssertTrue(grid.cells.count <= all)
-        XCTAssertTrue(app.buttons["清除"].exists)
-        app.buttons["清除"].tap()
-        sleep(1)
-        XCTAssertEqual(grid.cells.count, all)
-    }
-
-    func testPlaceFilterListsCities() throws {
-        try requireIndexedPhotos()
-        app.buttons["地点"].tap()
-        XCTAssertTrue(app.navigationBars["地点"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["不限地点"].exists)
-        app.buttons["完成"].tap()
-    }
+    // MARK: - Selection (F4.11)
 
     func testSelectionModeShowsActions() throws {
         try requireIndexedPhotos()

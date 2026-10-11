@@ -16,12 +16,11 @@ enum SearchEngine {
 
     /// Top-K by score, never cut off (F4.3); the caller places the
     /// "相关度较低" divider.
-    static func rank(query: [Float], text: String = "", rows: [EmbeddingStore.SearchRow],
-                     allowed: Set<String>? = nil, k: Int) -> [Hit] {
+    static func rank(query: [Float], text: String = "", rows: [EmbeddingStore.SearchRow], k: Int) -> [Hit] {
         let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         var hits: [Hit] = []
         hits.reserveCapacity(rows.count)
-        for row in rows where allowed?.contains(row.id) ?? true {
+        for row in rows {
             let n = min(query.count, row.vector.count)
             guard n > 0 else { continue }
             var dot: Float = 0

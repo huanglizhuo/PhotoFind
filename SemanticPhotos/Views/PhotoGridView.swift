@@ -19,7 +19,7 @@ struct PhotoGridView: View {
 
     var body: some View {
         let results = model.searchResults
-        let photos = results?.map(\.photo) ?? model.visiblePhotos
+        let photos = results?.map(\.photo) ?? model.photos
         ZStack(alignment: .top) {
             PhotoCollection(
                 model: model,
@@ -81,12 +81,6 @@ struct PhotoGridView: View {
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
                 Text("没有找到匹配的照片")
-                    .foregroundStyle(.secondary)
-            } else if !model.photos.isEmpty {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                Text("没有符合筛选条件的照片")
                     .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "photo.on.rectangle.angled")
