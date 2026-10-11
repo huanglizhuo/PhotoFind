@@ -83,7 +83,7 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showPrivacy) { NavigationStack { PrivacyView() } }
         .sheet(isPresented: $showProgressDetail) { ProgressDetailView() }
-        .sheet(item: $shareItems) { ShareSheet(items: $0.images) }
+        .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
         .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
             TextField("相簿名称", text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
             Button("存储") { saveAlbum() }
@@ -161,13 +161,15 @@ struct ContentView: View {
         .glassEffect(.regular, in: .capsule)
     }
 
+    /// F3.5.4 (T13): originals are fetched to tmp one by one; iCloud
+    /// downloads can take a moment, hence the "准备中…" state.
     private func share(_ ids: [String]) {
         guard !preparingShare else { return }
         preparingShare = true
         Task {
-            let images = await model.photoService.shareImages(for: ids)
+            let urls = await model.photoService.shareFiles(for: ids)
             preparingShare = false
-            if !images.isEmpty { shareItems = ShareItems(images: images) }
+            if !urls.isEmpty { shareItems = ShareItems(urls: urls) }
         }
     }
 

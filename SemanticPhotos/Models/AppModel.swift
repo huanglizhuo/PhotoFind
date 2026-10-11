@@ -146,6 +146,8 @@ final class AppModel {
         guard !launched else { return }
         launched = true
         ModelFile.removeLegacyDownloads()
+        // T13 (F3.5.4): sweep share temp files a previous run left behind.
+        PhotoLibraryService.removeShareFiles()
         configureEngine()
         observePowerAndHeat()
         Task {

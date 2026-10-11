@@ -76,6 +76,28 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["xmark.circle.fill"].tap()
     }
 
+    /// T13 (F3.5.4): tapping 分享 hands the original file to the system share
+    /// sheet. Deliberately broad existence check — the activity list or any
+    /// characteristic action row counts — since the sheet's exact contents vary
+    /// by iOS version and installed apps.
+    func testShareSheetAppears() throws {
+        try requireIndexedPhotos()
+        grid.cells.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["分享"].waitForExistence(timeout: 5))
+        app.buttons["分享"].tap()
+        // Fetching the original can involve an iCloud download, so allow time.
+        let appeared = app.collectionViews["ActivityListView"].waitForExistence(timeout: 30)
+            || app.buttons["存储图像"].waitForExistence(timeout: 3)
+            || app.buttons["拷贝"].waitForExistence(timeout: 3)
+            || app.buttons["存储到文件"].waitForExistence(timeout: 3)
+        XCTAssertTrue(appeared, "点分享后应出现系统分享面板")
+        if app.buttons["取消"].exists {
+            app.buttons["取消"].firstMatch.tap()
+        } else {
+            app.swipeDown()  // iPad-style sheet has no 取消 button
+        }
+    }
+
     // MARK: - Search (F4)
 
     func testSearchShowsResultsAndClears() throws {

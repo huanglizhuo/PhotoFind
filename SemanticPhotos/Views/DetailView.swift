@@ -95,7 +95,7 @@ struct DetailView: View {
                 }
             }
         }
-        .sheet(item: $shareItems) { ShareSheet(items: $0.images) }
+        .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
     }
 
     /// The UI is Chinese whatever the device language, so dates are too.
@@ -111,25 +111,27 @@ struct DetailView: View {
         .accessibilityLabel(label)
     }
 
+    /// F3.5.4 (T13): the original file is fetched to tmp first; iCloud
+    /// downloads can take a moment, hence the hourglass state.
     private func share(_ id: String) {
         guard !preparingShare else { return }
         preparingShare = true
         Task {
-            let images = await model.photoService.shareImages(for: [id])
+            let urls = await model.photoService.shareFiles(for: [id])
             preparingShare = false
-            if !images.isEmpty { shareItems = ShareItems(images: images) }
+            if !urls.isEmpty { shareItems = ShareItems(urls: urls) }
         }
     }
 }
 
 struct ShareItems: Identifiable {
     let id = UUID()
-    let images: [UIImage]
+    let urls: [URL]
 }
 
-/// System share sheet for photos (F3.5.2 / F4.11).
+/// System share sheet taking file URLs (F3.5.2 / F3.5.4 / F4.11).
 struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
+    let items: [URL]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
