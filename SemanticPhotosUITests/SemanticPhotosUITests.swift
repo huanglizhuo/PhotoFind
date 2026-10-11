@@ -86,7 +86,11 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["分享"].waitForExistence(timeout: 5))
         app.buttons["分享"].tap()
         // Fetching the original can involve an iCloud download, so allow time.
-        let appeared = app.collectionViews["ActivityListView"].waitForExistence(timeout: 30)
+        // On iOS 26 the "ActivityListView" identifier sits on an Other element and
+        // the collection view is "activityCollectionView" (the share sheet runs
+        // in a remote container view), so probe several shapes.
+        let appeared = app.otherElements["ActivityListView"].waitForExistence(timeout: 30)
+            || app.collectionViews["activityCollectionView"].waitForExistence(timeout: 5)
             || app.buttons["存储图像"].waitForExistence(timeout: 3)
             || app.buttons["拷贝"].waitForExistence(timeout: 3)
             || app.buttons["存储到文件"].waitForExistence(timeout: 3)
