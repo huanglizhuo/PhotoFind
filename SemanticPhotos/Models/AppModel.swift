@@ -137,6 +137,8 @@ final class AppModel {
         guard !launched else { return }
         launched = true
         ModelFile.removeLegacyDownloads()
+        // T13 (F3.5.4): sweep share temp files a previous run left behind.
+        PhotoLibraryService.removeShareFiles()
         configureEngine()
         observePowerAndHeat()
         Task {
@@ -322,44 +324,14 @@ final class AppModel {
         newAssetIDs = []
     }
 
-    // F2.7: remove from index only; the photo stays in the library.
-    func removeFromIndex(_ ids: [String]) {
+    /// F5.2: drops rows the library no longer shows (deleted, hidden or outside
+    /// a shrunk Limited selection); called by the library sync only (T7).
+    private func removeFromIndex(_ ids: [String]) {
         let gone = Set(ids)
         pipeline.forget(gone)
         photos.removeAll { gone.contains($0.id) }
         searchResults?.removeAll { gone.contains($0.id) }
         Task { try? await store.delete(ids: ids) }
-    }
-
-    /// F2.7 "从相册删除": system confirmation, then the index follows.
-    func deleteFromLibrary(_ ids: [String]) async {
-        do {
-            if try await photoService.deleteFromLibrary(ids) {
-                removeFromIndex(ids)
-            }
-        } catch {
-            searchError = error.localizedDescription
-        }
-    }
-
-    /// F3.5.2: writes to the system library; the local copy updates at once.
-    func setFavorite(_ favorite: Bool, for id: String) {
-        updateMeta(id) { $0.isFavorite = favorite }
-        Task {
-            do {
-                try await photoService.setFavorite(favorite, for: id)
-            } catch {
-                updateMeta(id) { $0.isFavorite = !favorite }
-                searchError = error.localizedDescription
-            }
-        }
-    }
-
-    private func updateMeta(_ id: String, _ change: (inout PhotoMeta) -> Void) {
-        guard let index = photos.firstIndex(where: { $0.id == id }) else { return }
-        change(&photos[index].meta)
-        let meta = photos[index].meta
-        Task { try? await store.updateMeta([(id, meta)]) }
     }
 
     func photo(_ id: String) -> IndexedPhoto? {
@@ -528,8 +500,9 @@ final class AppModel {
 
     // MARK: - F5 sync
 
-    /// Cold-start sweep (F5.2/F5.3): existence + modificationDate over the whole
-    /// index, plus a metadata refresh (A0) that backfills rows from older versions.
+    /// Cold-start sweep (F5.2/F5.3): existence (incl. the Hidden album, T7) +
+    /// modificationDate over the whole index, plus a metadata refresh (A0) that
+    /// backfills rows from older versions.
     func validateIndexOnColdStart() async {
         do {
             let rows = try await store.metaRows()
@@ -539,18 +512,19 @@ final class AppModel {
             var edited: [String] = []
             var fresh: [(id: String, base: PhotoMeta, stored: PhotoMeta)] = []
             for row in rows {
-                if let asset = map[row.id] {
-                    // Stored as timeIntervalSince1970, which drops the last bit of ~half
-                    // the dates; exact != re-embedded those photos on every launch.
-                    let stored = row.modificationDate?.timeIntervalSince1970 ?? 0
-                    if abs((asset.modificationDate?.timeIntervalSince1970 ?? 0) - stored) > 0.001 {
-                        edited.append(row.id)
-                    }
-                    fresh.append((row.id, photoService.baseMeta(for: asset), row.meta))
-                } else {
-                    // Not visible anymore: deleted, or outside a shrunk Limited selection.
+                guard let asset = map[row.id], !asset.isHidden else {
+                    // Not visible anymore: deleted, hidden (T7) or outside a shrunk
+                    // Limited selection.
                     deleted.append(row.id)
+                    continue
                 }
+                // Stored as timeIntervalSince1970, which drops the last bit of ~half
+                // the dates; exact != re-embedded those photos on every launch.
+                let stored = row.modificationDate?.timeIntervalSince1970 ?? 0
+                if abs((asset.modificationDate?.timeIntervalSince1970 ?? 0) - stored) > 0.001 {
+                    edited.append(row.id)
+                }
+                fresh.append((row.id, photoService.baseMeta(for: asset), row.meta))
             }
             if !deleted.isEmpty {
                 removeFromIndex(deleted)

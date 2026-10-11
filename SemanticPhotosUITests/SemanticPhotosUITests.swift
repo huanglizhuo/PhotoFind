@@ -68,9 +68,7 @@ final class SemanticPhotosUITests: XCTestCase {
         try requireModel()
         grid.cells.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["收藏"].exists || app.buttons["取消收藏"].exists)
         XCTAssertTrue(app.buttons["分享"].exists)
-        XCTAssertTrue(app.buttons["更多"].exists)
         app.buttons["相似"].tap()
         // F4.9: results replace the grid, titled 相似照片, with the clear button.
         XCTAssertTrue(app.buttons["xmark.circle.fill"].waitForExistence(timeout: 10))
@@ -78,24 +76,26 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["xmark.circle.fill"].tap()
     }
 
-    /// F3.5.2: favorite writes back to the library and survives a round trip.
-    /// (A PhotoKit change block inferred as main-actor isolated used to trap here.)
-    func testFavoriteRoundTrip() throws {
+    /// T13 (F3.5.4): tapping 分享 hands the original file to the system share
+    /// sheet. Deliberately broad existence check — the activity list or any
+    /// characteristic action row counts — since the sheet's exact contents vary
+    /// by iOS version and installed apps.
+    func testShareSheetAppears() throws {
         try requireIndexedPhotos()
         grid.cells.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        // The library grid (with its 收藏 filter chip) stays in the tree under the cover.
-        func visible(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { $0.isHittable }
+        XCTAssertTrue(app.buttons["分享"].waitForExistence(timeout: 5))
+        app.buttons["分享"].tap()
+        // Fetching the original can involve an iCloud download, so allow time.
+        let appeared = app.collectionViews["ActivityListView"].waitForExistence(timeout: 30)
+            || app.buttons["存储图像"].waitForExistence(timeout: 3)
+            || app.buttons["拷贝"].waitForExistence(timeout: 3)
+            || app.buttons["存储到文件"].waitForExistence(timeout: 3)
+        XCTAssertTrue(appeared, "点分享后应出现系统分享面板")
+        if app.buttons["取消"].exists {
+            app.buttons["取消"].firstMatch.tap()
+        } else {
+            app.swipeDown()  // iPad-style sheet has no 取消 button
         }
-        let start = visible("取消收藏") != nil ? "取消收藏" : "收藏"
-        let other = start == "收藏" ? "取消收藏" : "收藏"
-        visible(start)?.tap()
-        XCTAssertTrue(app.buttons[other].waitForExistence(timeout: 5))
-        visible(other)?.tap()
-        sleep(1)
-        XCTAssertNotNil(visible(start), "收藏状态应恢复")
-        XCTAssertEqual(app.state, .runningForeground)
     }
 
     // MARK: - Search (F4)
@@ -199,7 +199,7 @@ final class SemanticPhotosUITests: XCTestCase {
         grid.cells.element(boundBy: 1).tap()
         XCTAssertTrue(app.navigationBars["已选择 2 张"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["存为相簿"].exists)
-        XCTAssertTrue(app.buttons["移除"].exists)
+        XCTAssertTrue(app.buttons["分享"].exists)
         XCTAssertFalse(detailOpen, "多选模式下点照片是选择,不是打开")
         app.buttons["完成"].tap()
     }

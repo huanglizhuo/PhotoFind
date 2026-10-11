@@ -2,8 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Full-screen photo browser (F0.3 / F3.5): page through photos with pinch and
-/// double-tap zoom; capture time and place; favorite, share, find similar,
-/// remove from search or delete from the library.
+/// double-tap zoom; capture time and place; share and find similar (F3.5.2).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -26,7 +25,7 @@ struct DetailView: View {
     }
 
     var body: some View {
-        // Fresh metadata (favorite) from the model, not the paging snapshot.
+        // Fresh metadata from the model, not the paging snapshot.
         let current = model.photo(currentID)
         ZStack {
             Color.black.ignoresSafeArea()
@@ -45,25 +44,9 @@ struct DetailView: View {
                     circleButton("xmark", label: "关闭") { dismiss() }
                     Spacer()
                     if let current {
-                        circleButton(current.meta.isFavorite ? "heart.fill" : "heart",
-                                     label: current.meta.isFavorite ? "取消收藏" : "收藏") {
-                            model.setFavorite(!current.meta.isFavorite, for: current.id)
-                        }
                         circleButton(preparingShare ? "hourglass" : "square.and.arrow.up", label: "分享") {
                             share(current.id)
                         }
-                        Menu {
-                            Button("从搜索中移除", systemImage: "eye.slash") { remove(current.id) }
-                            Button("从相册删除", systemImage: "trash", role: .destructive) {
-                                Task { await deleteFromLibrary(current.id) }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("更多")
                     }
                 }
                 .padding(.horizontal, 20)
@@ -112,7 +95,7 @@ struct DetailView: View {
                 }
             }
         }
-        .sheet(item: $shareItems) { ShareSheet(items: $0.images) }
+        .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
     }
 
     /// The UI is Chinese whatever the device language, so dates are too.
@@ -128,50 +111,27 @@ struct DetailView: View {
         .accessibilityLabel(label)
     }
 
+    /// F3.5.4 (T13): the original file is fetched to tmp first; iCloud
+    /// downloads can take a moment, hence the hourglass state.
     private func share(_ id: String) {
         guard !preparingShare else { return }
         preparingShare = true
         Task {
-            let images = await model.photoService.shareImages(for: [id])
+            let urls = await model.photoService.shareFiles(for: [id])
             preparingShare = false
-            if !images.isEmpty { shareItems = ShareItems(images: images) }
+            if !urls.isEmpty { shareItems = ShareItems(urls: urls) }
         }
-    }
-
-    /// Moves to a neighbour before the photo leaves the list, or closes.
-    private func remove(_ id: String) {
-        advance(from: id)
-        model.removeFromIndex([id])
-    }
-
-    private func deleteFromLibrary(_ id: String) async {
-        let neighbour = neighbour(of: id)
-        await model.deleteFromLibrary([id])
-        if model.photo(id) == nil {
-            if let neighbour { currentID = neighbour } else { dismiss() }
-        }
-    }
-
-    private func advance(from id: String) {
-        if let next = neighbour(of: id) { currentID = next } else { dismiss() }
-    }
-
-    private func neighbour(of id: String) -> String? {
-        let ids = items.map(\.id)
-        guard let index = ids.firstIndex(of: id) else { return nil }
-        if index + 1 < ids.count { return ids[index + 1] }
-        return index > 0 ? ids[index - 1] : nil
     }
 }
 
 struct ShareItems: Identifiable {
     let id = UUID()
-    let images: [UIImage]
+    let urls: [URL]
 }
 
-/// System share sheet for photos (F3.5.2 / F4.11).
+/// System share sheet taking file URLs (F3.5.2 / F3.5.4 / F4.11).
 struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
+    let items: [URL]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)

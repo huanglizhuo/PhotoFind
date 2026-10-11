@@ -76,7 +76,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showImportFlow) { ImportFlowView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .sheet(item: $shareItems) { ShareSheet(items: $0.images) }
+        .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
         .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
             TextField("相簿名称", text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
             Button("存储") { saveAlbum() }
@@ -120,14 +120,6 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if let results = model.searchResults, !results.isEmpty {
-                    Button {
-                        albumPrompt = AlbumPrompt(name: model.searchText.isEmpty ? (model.searchTitle ?? "搜索结果") : model.searchText,
-                                                  ids: results.map(\.id))
-                    } label: {
-                        Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
-                    }
-                }
                 Button { showSettings = true } label: {
                     Label("设置", systemImage: "gearshape")
                 }
@@ -148,13 +140,6 @@ struct ContentView: View {
             } label: {
                 Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
             }
-            Button(role: .destructive) {
-                model.removeFromIndex(ids)
-                self.selection = []
-                show("已从搜索中移除 \(ids.count) 张")
-            } label: {
-                Label("移除", systemImage: "eye.slash")
-            }
         }
         .font(.footnote.weight(.medium))
         .buttonStyle(.glass)
@@ -165,13 +150,15 @@ struct ContentView: View {
         .glassEffect(.regular, in: .capsule)
     }
 
+    /// F3.5.4 (T13): originals are fetched to tmp one by one; iCloud
+    /// downloads can take a moment, hence the "准备中…" state.
     private func share(_ ids: [String]) {
         guard !preparingShare else { return }
         preparingShare = true
         Task {
-            let images = await model.photoService.shareImages(for: ids)
+            let urls = await model.photoService.shareFiles(for: ids)
             preparingShare = false
-            if !images.isEmpty { shareItems = ShareItems(images: images) }
+            if !urls.isEmpty { shareItems = ShareItems(urls: urls) }
         }
     }
 

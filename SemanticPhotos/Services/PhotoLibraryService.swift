@@ -1,10 +1,11 @@
 import Foundation
 import Photos
 import UIKit
+import UniformTypeIdentifiers
 
 /// PhotoKit access layer: authorization, asset fetching, scaled images for
-/// embedding / text recognition / sharing, cached metadata (A0), library edits
-/// (favorite, delete, albums) and the library-change observer (F5).
+/// embedding / text recognition / sharing, cached metadata (A0), album creation
+/// (F4.11) and the library-change observer (F5).
 @MainActor
 @Observable
 final class PhotoLibraryService: NSObject {
@@ -169,15 +170,119 @@ final class PhotoLibraryService: NSObject {
         return await scaledImage(asset, longEdge: 1536)
     }
 
-    /// Images for the share sheet (F3.5.2 / F4.11), skipping ones that can't be read.
-    func shareImages(for ids: [String]) async -> [UIImage] {
-        var images: [UIImage] = []
+    /// Original photo files for the share sheet (F3.5.4 / F4.11, T13): fetched
+    /// one at a time and written to a fresh `tmp/share/<UUID>/` directory
+    /// before the next asset is touched, so originals never accumulate in
+    /// memory. Assets that can't be read are skipped.
+    func shareFiles(for ids: [String]) async -> [URL] {
+        let dir = Self.shareTempDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            return []
+        }
+        var urls: [URL] = []
+        var usedNames = Set<String>()
         for id in ids {
-            if let asset = asset(for: id), let image = await scaledImage(asset, longEdge: 2048) {
-                images.append(image)
+            guard let asset = asset(for: id),
+                  let url = await writeOriginalFile(asset, to: dir, avoiding: usedNames) else { continue }
+            usedNames.insert(url.lastPathComponent)
+            urls.append(url)
+        }
+        return urls
+    }
+
+    /// F3.5.4 (T13): the share temp directory, one subdirectory per share.
+    /// Removed when the sheet closes and swept once at launch; no PhotoKit
+    /// access happens here, so it is safe before authorization.
+    static let shareTempDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("share", isDirectory: true)
+
+    /// F3.5.4 (T13): deletes `tmp/share/` and everything under it.
+    static func removeShareFiles() {
+        try? FileManager.default.removeItem(at: shareTempDirectory)
+    }
+
+    /// Fetches the asset's current original data (edits included, iCloud
+    /// download allowed) and writes it out. Live Photos contribute their
+    /// still image only: `requestImageDataAndOrientation` never returns the
+    /// video side. The completion runs on a PhotoKit queue, so only the
+    /// Sendable result crosses back (Swift 6).
+    private func writeOriginalFile(_ asset: PHAsset, to dir: URL, avoiding used: Set<String>) async -> URL? {
+        guard let (data, uti) = await currentImageData(asset) else { return nil }
+        let url = dir.appendingPathComponent(shareFilename(asset, dataUTI: uti, avoiding: used))
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private func currentImageData(_ asset: PHAsset) async -> (data: Data, uti: String?)? {
+        await withCheckedContinuation { continuation in
+            let options = PHImageRequestOptions()
+            options.version = .current
+            options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = true
+            var resumed = false
+            cachingManager.requestImageDataAndOrientation(for: asset, options: options) { data, uti, _, info in
+                let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+                let errored = info?[PHImageErrorKey] != nil
+                guard !resumed, !cancelled else { return }
+                if data != nil || errored {
+                    resumed = true
+                    continuation.resume(returning: data.map { ($0, uti) })
+                }
             }
         }
-        return images
+    }
+
+    /// F3.5.4 (T13): keeps the library's original filename, with the extension
+    /// taken from the fetched data's UTI; falls back to the asset id plus a
+    /// reasonable extension. Collisions (chat images sharing a name) get a
+    /// counter so multi-select shares don't overwrite each other.
+    private func shareFilename(_ asset: PHAsset, dataUTI: String?, avoiding used: Set<String>) -> String {
+        let original = originalFilename(asset)
+        let ext = Self.filenameExtension(forUTI: dataUTI, originalFilename: original) ?? "jpg"
+        var base = original.map { ($0 as NSString).deletingPathExtension } ?? ""
+        if base.isEmpty { base = asset.localIdentifier }
+        base = base.replacingOccurrences(of: "/", with: "-")
+        var name = "\(base).\(ext)"
+        var counter = 2
+        while used.contains(name) {
+            name = "\(base)-\(counter).\(ext)"
+            counter += 1
+        }
+        return name
+    }
+
+    /// The UTI is the truth about the bytes on disk; the original filename's
+    /// own extension is the fallback. Xcode 27's SDK only imports
+    /// `UTType(identifier:allowUndeclared:)` (iOS 27+), so older OSes go
+    /// straight to the fallback — PhotoKit filenames carry their real
+    /// extension anyway.
+    private static func filenameExtension(forUTI uti: String?, originalFilename: String?) -> String? {
+        if #available(iOS 27.0, *), let uti,
+           let ext = UTType(identifier: uti, allowUndeclared: false)?.preferredFilenameExtension {
+            return ext
+        }
+        if let name = originalFilename {
+            let ext = (name as NSString).pathExtension
+            if !ext.isEmpty { return ext }
+        }
+        return nil
+    }
+
+    /// The name Photos itself uses for the asset, e.g. IMG_0001.HEIC.
+    private func originalFilename(_ asset: PHAsset) -> String? {
+        let resources = PHAssetResource.assetResources(for: asset)
+        for type in [PHAssetResourceType.photo, .fullSizePhoto] {
+            if let name = resources.first(where: { $0.type == type })?.originalFilename, !name.isEmpty {
+                return name
+            }
+        }
+        return nil
     }
 
     private func scaledImage(_ asset: PHAsset, longEdge: CGFloat,
@@ -189,30 +294,9 @@ final class PhotoLibraryService: NSObject {
                                   allowNetwork: true, contentMode: .aspectFit, onCloudDownload: onCloudDownload)
     }
 
-    // MARK: - Library edits
+    // MARK: - Albums
     // PhotoKit runs change blocks on its own queue: written in this @MainActor
     // type they'd be inferred main-actor isolated and trap at run time, hence @Sendable.
-
-    /// Writes the favorite flag back to the system library (F3.5.2).
-    func setFavorite(_ favorite: Bool, for id: String) async throws {
-        try await PHPhotoLibrary.shared().performChanges { @Sendable in
-            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { return }
-            PHAssetChangeRequest(for: asset).isFavorite = favorite
-        }
-    }
-
-    /// Deletes from the library behind the system confirmation (F2.7).
-    /// Returns false when the user declines.
-    func deleteFromLibrary(_ ids: [String]) async throws -> Bool {
-        do {
-            try await PHPhotoLibrary.shared().performChanges { @Sendable in
-                PHAssetChangeRequest.deleteAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
-            }
-            return true
-        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError {
-            return false
-        }
-    }
 
     /// Creates an album holding the photos (F4.11).
     func saveAlbum(named title: String, ids: [String]) async throws {
