@@ -1,0 +1,713 @@
+import Foundation
+import Photos
+import SwiftUI
+
+/// Central app state: owns services, the indexed photo list, search mode,
+/// filters, settings, background indexing and the F5 photo-library sync logic.
+@MainActor
+@Observable
+final class AppModel {
+    /// One instance: the App, the AppDelegate (background tasks) and App
+    /// Intents all reach the same state.
+    static let shared = AppModel()
+
+    let modelManager = ModelDownloadManager.shared
+    /// Lazy: merely initializing PhotoKit (status checks, PHCachingImageManager)
+    /// can surface the system permission prompt on iOS 26 before our
+    /// pre-permission sheet (F2.1) is shown. Nothing photo-related may run
+    /// until the user has granted access.
+    private var _photoService: PhotoLibraryService?
+    var photoService: PhotoLibraryService {
+        if let _photoService { return _photoService }
+        let service = PhotoLibraryService()
+        _photoService = service
+        return service
+    }
+    let engine = EmbeddingEngine()
+    let store = EmbeddingStore()
+    let background = BackgroundIndexing()
+
+    // Grid
+    /// Every indexed photo, newest capture first (F3.1).
+    private(set) var photos: [IndexedPhoto] = []
+    var gridColumns: Int {
+        didSet { UserDefaults.standard.set(gridColumns, forKey: "gridColumns") }
+    }
+    /// Filter bar (F4.8); applies to browsing and to search candidates.
+    var filter = PhotoFilter() {
+        didSet { if filter != oldValue, searchResults != nil, searchTitle == nil { performSearch() } }
+    }
+    var visiblePhotos: [IndexedPhoto] {
+        filter.isActive ? photos.filter { filter.matches($0) } : photos
+    }
+
+    // Search
+    var searchText = ""
+    private(set) var searchResults: [ScoredPhoto]?
+    /// Index in `searchResults` where the "相关度较低" divider goes (F4.3).
+    private(set) var lowRelevanceStart: Int?
+    /// Shown in the search bar for searches without typed text (相似照片).
+    private(set) var searchTitle: String?
+    private(set) var isSearching = false
+    /// The model is being loaded for this search (F1.10).
+    private(set) var isModelLoading = false
+    private(set) var searchError: String?
+    private(set) var recentSearches: [String]
+    private var searchTask: Task<Void, Never>?
+    private var debounceTask: Task<Void, Never>?
+    static let exampleQueries = ["海边日落", "猫", "雪山", "美食", "发票", "截图", "生日蛋糕", "夜景"]
+
+    // F5.1: newly added assets discovered by the observer (Full access only)
+    private(set) var newAssetIDs: [String] = []
+
+    // F4.6: index/model mismatch
+    private(set) var needsRebuild = false
+
+    // Settings (persisted)
+    var dimension: Int {
+        didSet {
+            UserDefaults.standard.set(dimension, forKey: "embeddingDimension")
+            Task { await checkIndexConsistency() }
+        }
+    }
+    /// F4.3 divider: a result is low relevance below max(best − gap, floor).
+    /// EmbeddingGemma's text→image similarities sit in a narrow band (measured:
+    /// matches 0.72–0.76, unrelated photos 0.60–0.67), so the old fixed 0.2 never
+    /// split anything; the gap follows the best match, the floor catches queries
+    /// nothing really matches. Both are tunable in the debug settings.
+    var relevanceGap: Float {
+        didSet { UserDefaults.standard.set(relevanceGap, forKey: "relevanceGap") }
+    }
+    var relevanceFloor: Float {
+        didSet { UserDefaults.standard.set(relevanceFloor, forKey: "relevanceFloor") }
+    }
+    var showScores: Bool {
+        didSet { UserDefaults.standard.set(showScores, forKey: "showScores") }
+    }
+    /// Toolbar switch (F1.9): off unloads the model and stops all inference.
+    var modelEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(modelEnabled, forKey: "modelEnabled")
+            applyModelState()
+        }
+    }
+    /// F5.1: new photos go straight into the queue instead of the banner.
+    var autoIndexNewPhotos: Bool {
+        didSet { UserDefaults.standard.set(autoIndexNewPhotos, forKey: "autoIndexNewPhotos") }
+    }
+    /// F4.12 second pass, on by default.
+    var textRecognitionEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(textRecognitionEnabled, forKey: "textRecognitionEnabled")
+            pipeline.textRecognitionEnabled = textRecognitionEnabled
+        }
+    }
+    /// Unlocks the evaluation screen (F8) outside debug builds.
+    var debugToolsEnabled: Bool {
+        didSet { UserDefaults.standard.set(debugToolsEnabled, forKey: "debugToolsEnabled") }
+    }
+    /// F7.3: one-time tip after the first photos become searchable.
+    private(set) var showFirstSearchTip = false
+
+    private var memoryWarningObserver: NSObjectProtocol?
+    private var powerObservers: [NSObjectProtocol] = []
+    private var launched = false
+    private var lastModelUse = Date()
+    private var isInForeground = true
+
+    var isModelReady: Bool { modelManager.state == .ready }
+    /// Downloaded and switched on: the only state in which embedding/search run.
+    var canRunModel: Bool { isModelReady && modelEnabled }
+    var indexedIDs: Set<String> { Set(photos.map(\.id)) }
+
+    /// Lazily created so constructing the pipeline never touches PhotoKit.
+    /// The provider is only invoked once embedding actually runs (post-auth).
+    private var _pipeline: EmbeddingPipeline?
+    var pipeline: EmbeddingPipeline {
+        if let _pipeline { return _pipeline }
+        let created = EmbeddingPipeline(store: store, engine: engine) { [unowned self] in
+            self.photoService
+        }
+        created.textRecognitionEnabled = textRecognitionEnabled
+        created.onPhotoIndexed = { [weak self] photo in self?.photoIndexed(photo) }
+        created.onProgress = { [weak self] done, total in self?.background.update(done: done, total: total) }
+        created.onFinished = { [weak self] embedded in self?.pipelineFinished(embedded: embedded) }
+        _pipeline = created
+        return created
+    }
+
+    private init() {
+        let defaults = UserDefaults.standard
+        gridColumns = max(2, min(10, defaults.object(forKey: "gridColumns") as? Int ?? 4))
+        dimension = defaults.object(forKey: "embeddingDimension") as? Int ?? 256
+        relevanceGap = defaults.object(forKey: "relevanceGap") as? Float ?? 0.04
+        relevanceFloor = defaults.object(forKey: "relevanceFloor") as? Float ?? 0.68
+        showScores = defaults.bool(forKey: "showScores")
+        modelEnabled = defaults.object(forKey: "modelEnabled") as? Bool ?? true
+        autoIndexNewPhotos = defaults.bool(forKey: "autoIndexNewPhotos")
+        textRecognitionEnabled = defaults.object(forKey: "textRecognitionEnabled") as? Bool ?? true
+        debugToolsEnabled = defaults.bool(forKey: "debugToolsEnabled")
+        recentSearches = defaults.stringArray(forKey: "recentSearches") ?? []
+        background.onOvernightLaunch = { [weak self] in self?.runOvernight() }
+    }
+
+    // MARK: - Launch
+
+    /// Idempotent: also called when iOS launches the app for an overnight task.
+    func onLaunch() {
+        guard !launched else { return }
+        launched = true
+        modelManager.refreshState()
+        applyModelState()
+        observePowerAndHeat()
+        Task {
+            await reloadIndex()
+            await pipeline.restore(dimension: dimension)
+        }
+        Task { await checkIndexConsistency() }
+        startIdleWatch()
+
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { await self?.engine.unload() }
+        }
+
+        // Only touch PhotoKit at launch after access was granted once (flag is
+        // set in photoServiceAuthorized()); a fresh install must see zero
+        // photo-library activity until the pre-permission sheet (F2.1).
+        if UserDefaults.standard.bool(forKey: "photoAccessGranted") {
+            photoService.refreshAuthorization()
+            if photoService.canImport {
+                photoService.allPhotos()
+                photoService.onLibraryChange = { [weak self] change in
+                    self?.handleLibraryChange(change)
+                }
+                Task { await validateIndexOnColdStart() }
+            }
+        }
+    }
+
+    func modelStateChanged() {
+        applyModelState()
+        if isModelReady { Task { await checkIndexConsistency() } }
+    }
+
+    /// Loads (F2.3 预热) or unloads the model to match `canRunModel`. While it
+    /// can't run, the engine refuses to load, the pipeline keeps its queue
+    /// paused and search is cleared.
+    private func applyModelState() {
+        let engine = engine
+        if canRunModel {
+            engine.configure(modelPath: modelManager.modelFileURL.path)
+            Task.detached(priority: .utility) { try? await engine.warmUp() }
+        } else {
+            engine.configure(modelPath: nil)
+            clearSearch()
+            Task { await engine.unload() }
+        }
+        pipeline.setPaused(.modelNotReady, !isModelReady)
+        pipeline.setPaused(.modelOff, isModelReady && !modelEnabled)
+    }
+
+    /// Called after the user grants photo access for the first time.
+    func photoServiceAuthorized() {
+        UserDefaults.standard.set(true, forKey: "photoAccessGranted")
+        guard photoService.canImport else { return }
+        photoService.allPhotos()
+        if photoService.onLibraryChange == nil {
+            photoService.onLibraryChange = { [weak self] change in
+                self?.handleLibraryChange(change)
+            }
+        }
+        Task { await validateIndexOnColdStart() }
+    }
+
+    // MARK: - Foreground / background (F2.8)
+
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            isInForeground = true
+            Task { await engine.setDelegate(.gpu, fallbackToCPU: false) }
+            checkSharedImage()
+        case .background:
+            isInForeground = false
+            let gpu = background.hasBackgroundGPU
+            Task { await engine.setDelegate(gpu ? .gpu : .cpu, fallbackToCPU: gpu) }
+            if pipeline.pendingCount > 0 { background.scheduleOvernight() }
+        default:
+            break
+        }
+    }
+
+    /// iOS launched (or woke) the app for the overnight task: CPU only.
+    private func runOvernight() {
+        onLaunch()
+        Task { await engine.setDelegate(.cpu, fallbackToCPU: false) }
+        if pipeline.pendingCount == 0 && !pipeline.isRunning {
+            background.finish(success: true)
+        }
+    }
+
+    // MARK: - Low power / heat (F1.10)
+
+    private func observePowerAndHeat() {
+        let center = NotificationCenter.default
+        let update: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor in self?.applyPowerState() }
+        }
+        powerObservers = [
+            center.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main, using: update),
+            center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main, using: update),
+        ]
+        applyPowerState()
+    }
+
+    private func applyPowerState() {
+        let info = ProcessInfo.processInfo
+        pipeline.setPaused(.lowPower, info.isLowPowerModeEnabled)
+        pipeline.setPaused(.thermal, info.thermalState == .serious || info.thermalState == .critical)
+    }
+
+    /// Unloads the model after 5 idle minutes; the next search or import
+    /// reloads it (F1.10).
+    private func startIdleWatch() {
+        Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                let idle = Date().timeIntervalSince(self.lastModelUse) > 300
+                if idle, !self.pipeline.hasWork, !self.isSearching, await self.engine.isLoaded {
+                    await self.engine.unload()
+                }
+            }
+        }
+    }
+
+    // MARK: - Index loading
+
+    func reloadIndex() async {
+        do {
+            let rows = try await store.metaRows()
+            photos = rows.map { IndexedPhoto(id: $0.id, modificationDate: $0.modificationDate,
+                                              importedAt: $0.importedAt, meta: $0.meta) }
+        } catch {
+            searchError = error.localizedDescription
+        }
+    }
+
+    private func photoIndexed(_ photo: IndexedPhoto) {
+        photos.removeAll { $0.id == photo.id }
+        // Keep newest-capture-first order (F3.1).
+        let index = photos.firstIndex { $0.sortDate < photo.sortDate } ?? photos.endIndex
+        photos.insert(photo, at: index)
+        newAssetIDs.removeAll { $0 == photo.id }
+        lastModelUse = Date()
+    }
+
+    private func pipelineFinished(embedded: Int) {
+        lastModelUse = Date()
+        guard pipeline.pendingCount == 0 else { return }
+        if embedded > 0, !isInForeground {
+            background.notifyFinished(searchableCount: photos.count)
+        }
+        background.finish(success: true)
+        if embedded > 0, !photos.isEmpty, !UserDefaults.standard.bool(forKey: "didSearchOnce") {
+            showFirstSearchTip = true
+        }
+    }
+
+    // MARK: - Import (F2)
+
+    /// Queues photos newest-first so the ones people look for most become
+    /// searchable soonest (F2.8).
+    func importAssets(_ ids: [String]) {
+        let dates = photoService.assetsMap(for: ids).mapValues { $0.creationDate ?? .distantPast }
+        let ordered = ids.sorted { (dates[$0] ?? .distantPast) > (dates[$1] ?? .distantPast) }
+        let before = pipeline.pendingCount
+        pipeline.enqueue(ordered, excluding: indexedIDs, dimension: dimension)
+        Task { await updateIndexConfigIfNeeded() }
+        if pipeline.pendingCount > before {
+            background.beginContinuedProcessing(total: pipeline.pendingCount)
+        }
+    }
+
+    /// Every visible photo not yet indexed (F2.8 "索引全部").
+    func unindexedPhotoIDs() -> [String] {
+        let indexed = indexedIDs
+        var ids: [String] = []
+        photoService.allPhotos().enumerateObjects { asset, _, _ in
+            if !indexed.contains(asset.localIdentifier) { ids.append(asset.localIdentifier) }
+        }
+        return ids
+    }
+
+    func indexAllPhotos() {
+        background.requestNotificationPermission()
+        importAssets(unindexedPhotoIDs())
+    }
+
+    private func updateIndexConfigIfNeeded() async {
+        let config = EmbeddingStore.IndexConfig(modelVersion: ModelDownloadManager.modelVersion, dimension: dimension)
+        try? await store.setIndexConfig(config)
+    }
+
+    func importNewAssets() {
+        let ids = newAssetIDs
+        newAssetIDs = []
+        importAssets(ids)
+    }
+
+    func dismissNewAssetsBanner() {
+        newAssetIDs = []
+    }
+
+    // F2.7: remove from index only; the photo stays in the library.
+    func removeFromIndex(_ ids: [String]) {
+        let gone = Set(ids)
+        pipeline.forget(gone)
+        photos.removeAll { gone.contains($0.id) }
+        searchResults?.removeAll { gone.contains($0.id) }
+        Task { try? await store.delete(ids: ids) }
+    }
+
+    /// F2.7 "从相册删除": system confirmation, then the index follows.
+    func deleteFromLibrary(_ ids: [String]) async {
+        do {
+            if try await photoService.deleteFromLibrary(ids) {
+                removeFromIndex(ids)
+            }
+        } catch {
+            searchError = error.localizedDescription
+        }
+    }
+
+    /// F3.5.2: writes to the system library; the local copy updates at once.
+    func setFavorite(_ favorite: Bool, for id: String) {
+        updateMeta(id) { $0.isFavorite = favorite }
+        Task {
+            do {
+                try await photoService.setFavorite(favorite, for: id)
+            } catch {
+                updateMeta(id) { $0.isFavorite = !favorite }
+                searchError = error.localizedDescription
+            }
+        }
+    }
+
+    private func updateMeta(_ id: String, _ change: (inout PhotoMeta) -> Void) {
+        guard let index = photos.firstIndex(where: { $0.id == id }) else { return }
+        change(&photos[index].meta)
+        let meta = photos[index].meta
+        Task { try? await store.updateMeta([(id, meta)]) }
+    }
+
+    func photo(_ id: String) -> IndexedPhoto? {
+        photos.first { $0.id == id }
+    }
+
+    // MARK: - Search (F4)
+
+    func searchTextChanged() {
+        if !searchText.isEmpty { searchTitle = nil }
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.performSearch()
+        }
+    }
+
+    func submitSearch() {
+        debounceTask?.cancel()
+        rememberSearch(searchText)
+        performSearch()
+    }
+
+    /// Example/recent chips and App Intents (F4.10 / F6.1).
+    func runSearch(_ query: String) {
+        searchText = query
+        submitSearch()
+    }
+
+    private func performSearch() {
+        searchTask?.cancel()
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            if searchTitle == nil { clearSearch() }
+            return
+        }
+        guard canRunModel else { return }
+        isSearching = true
+        searchError = nil
+        searchTitle = nil
+        UserDefaults.standard.set(true, forKey: "didSearchOnce")
+        showFirstSearchTip = false
+        let allowed = filter.isActive ? Set(visiblePhotos.map(\.id)) : nil
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.isSearching = false
+                self.isModelLoading = false
+            }
+            do {
+                if !(await self.engine.isLoaded) { self.isModelLoading = true }
+                let queryVector = try await self.engine.embedText(query, dimension: self.dimension)
+                self.isModelLoading = false
+                self.lastModelUse = Date()
+                let rows = try await self.store.searchRows()
+                // A Siri search can cold-launch the app before the photo list loads.
+                if self.photos.isEmpty { await self.reloadIndex() }
+                guard !Task.isCancelled else { return }
+                self.show(SearchEngine.rank(query: queryVector, text: query, rows: rows, allowed: allowed, k: 60))
+            } catch {
+                if !Task.isCancelled { self.searchError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// `seed`: the photo a similar-photo search started from, which matches
+    /// itself perfectly and so isn't the reference for the divider.
+    private func show(_ hits: [SearchEngine.Hit], title: String? = nil, seed: String? = nil) {
+        let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+        let results = hits.compactMap { hit in
+            byID[hit.id].map { ScoredPhoto(photo: $0, score: hit.score, textMatch: hit.textMatch) }
+        }
+        // Text matches always rank above the divider (F4.12).
+        let best = results.first { !$0.textMatch && $0.id != seed }?.score
+        lowRelevanceStart = best.flatMap { best in
+            let cutoff = max(best - relevanceGap, relevanceFloor)
+            return results.firstIndex { !$0.textMatch && $0.id != seed && $0.score < cutoff }
+        }
+        searchTitle = title
+        searchResults = results
+    }
+
+    /// F4.9: the photo's stored vector is the query, so no inference runs.
+    func showSimilar(to id: String) {
+        searchTask?.cancel()
+        debounceTask?.cancel()
+        searchTask = Task { [weak self] in
+            guard let self, let vector = try? await self.store.vector(for: id),
+                  let rows = try? await self.store.searchRows() else { return }
+            var hits = SearchEngine.rank(query: vector, rows: rows, k: 60)
+            // The photo itself always leads (score ≈ 1).
+            if let seed = hits.firstIndex(where: { $0.id == id }), seed != 0 {
+                hits.insert(hits.remove(at: seed), at: 0)
+            }
+            self.searchText = ""
+            self.show(hits, title: "相似照片", seed: id)
+        }
+    }
+
+    /// F6.3: an image shared from another app; embedding happens here, not in
+    /// the extension.
+    func showSimilar(toImage image: UIImage) {
+        guard canRunModel else { return }
+        isSearching = true
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isSearching = false }
+            guard let vector = try? await self.engine.embedImage(image, dimension: self.dimension),
+                  let rows = try? await self.store.searchRows() else { return }
+            self.lastModelUse = Date()
+            self.searchText = ""
+            self.show(SearchEngine.rank(query: vector, rows: rows, k: 60), title: "与分享的图片相似")
+        }
+    }
+
+    func clearSearch() {
+        searchTask?.cancel()
+        debounceTask?.cancel()
+        searchText = ""
+        searchTitle = nil
+        searchResults = nil
+        lowRelevanceStart = nil
+        isSearching = false
+    }
+
+    private func rememberSearch(_ text: String) {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        recentSearches.removeAll { $0 == query }
+        recentSearches.insert(query, at: 0)
+        recentSearches = Array(recentSearches.prefix(10))
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+    }
+
+    func clearRecentSearches() {
+        recentSearches = []
+        UserDefaults.standard.removeObject(forKey: "recentSearches")
+    }
+
+    func dismissFirstSearchTip() {
+        showFirstSearchTip = false
+        UserDefaults.standard.set(true, forKey: "didSearchOnce")
+    }
+
+    // MARK: - Shared image inbox (F6.3)
+
+    private func checkSharedImage() {
+        guard canRunModel, let url = SharedImageInbox.url,
+              let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
+        try? FileManager.default.removeItem(at: url)
+        showSimilar(toImage: image)
+    }
+
+    // MARK: - Places (F4.8)
+
+    /// Cities and countries present in the index, most photos first.
+    func placeOptions() -> (cities: [(place: CityDatabase.Place, count: Int)], countries: [(code: String, count: Int)]) {
+        var cityCounts: [Int: Int] = [:]
+        for photo in photos {
+            if let city = photo.meta.cityID, (photo.meta.cityKm ?? .infinity) <= 100 { cityCounts[city, default: 0] += 1 }
+        }
+        var countryCounts: [String: Int] = [:]
+        var cities: [(place: CityDatabase.Place, count: Int)] = []
+        for (id, count) in cityCounts {
+            guard let place = CityDatabase.shared.place(id: id) else { continue }
+            cities.append((place, count))
+            countryCounts[place.country, default: 0] += count
+        }
+        return (cities.sorted { $0.count > $1.count },
+                countryCounts.map { ($0.key, $0.value) }.sorted { $0.count > $1.count })
+    }
+
+    // MARK: - Index consistency (F4.6)
+
+    func checkIndexConsistency() async {
+        guard let config = try? await store.indexConfig() else {
+            needsRebuild = false
+            return
+        }
+        needsRebuild = config.modelVersion != ModelDownloadManager.modelVersion || config.dimension != dimension
+    }
+
+    func rebuildIndex() {
+        Task {
+            let ids = photos.map(\.id)
+            try? await store.clearAll()
+            try? await store.setIndexConfig(.init(modelVersion: ModelDownloadManager.modelVersion, dimension: dimension))
+            photos = []
+            needsRebuild = false
+            importAssets(ids)
+        }
+    }
+
+    // MARK: - F5 sync
+
+    /// Cold-start sweep (F5.2/F5.3): existence + modificationDate over the whole
+    /// index, plus a metadata refresh (A0) that backfills rows from older versions.
+    func validateIndexOnColdStart() async {
+        do {
+            let rows = try await store.metaRows()
+            guard !rows.isEmpty else { return }
+            let map = photoService.assetsMap(for: rows.map(\.id))
+            var deleted: [String] = []
+            var edited: [String] = []
+            var fresh: [(id: String, base: PhotoMeta, stored: PhotoMeta)] = []
+            for row in rows {
+                if let asset = map[row.id] {
+                    // Stored as timeIntervalSince1970, which drops the last bit of ~half
+                    // the dates; exact != re-embedded those photos on every launch.
+                    let stored = row.modificationDate?.timeIntervalSince1970 ?? 0
+                    if abs((asset.modificationDate?.timeIntervalSince1970 ?? 0) - stored) > 0.001 {
+                        edited.append(row.id)
+                    }
+                    fresh.append((row.id, photoService.baseMeta(for: asset), row.meta))
+                } else {
+                    // Not visible anymore: deleted, or outside a shrunk Limited selection.
+                    deleted.append(row.id)
+                }
+            }
+            if !deleted.isEmpty {
+                removeFromIndex(deleted)
+            }
+            if !edited.isEmpty {
+                pipeline.enqueue(edited, excluding: [], dimension: dimension)
+            }
+            // City lookups off the main actor: the first launch after upgrading
+            // locates the whole index.
+            let changed = await Task.detached(priority: .utility) {
+                fresh.compactMap { item -> (id: String, meta: PhotoMeta)? in
+                    var meta = item.base
+                    meta.locateCity(reusing: item.stored)
+                    return meta == item.stored ? nil : (item.id, meta)
+                }
+            }.value
+            applyMeta(changed)
+        } catch {
+            searchError = error.localizedDescription
+        }
+    }
+
+    private func applyMeta(_ changed: [(id: String, meta: PhotoMeta)]) {
+        guard !changed.isEmpty else { return }
+        let byID = Dictionary(changed.map { ($0.id, $0.meta) }, uniquingKeysWith: { $1 })
+        for index in photos.indices {
+            if let meta = byID[photos[index].id] { photos[index].meta = meta }
+        }
+        photos.sort { $0.sortDate > $1.sortDate }
+        Task { try? await store.updateMeta(changed) }
+    }
+
+    private func handleLibraryChange(_ change: PHChange) {
+        guard photoService.canImport else { return }
+        guard let fetchResult = photoService.observedFetchResult,
+              let details = change.changeDetails(for: fetchResult) else {
+            // Fetch result changed too much to diff: fall back to a full validation.
+            photoService.allPhotos()
+            Task { await validateIndexOnColdStart() }
+            return
+        }
+        photoService.updateObservedFetchResult(details.fetchResultAfterChanges)
+
+        let indexedIDs = self.indexedIDs
+        let changedIndexed = details.changedObjects.filter { indexedIDs.contains($0.localIdentifier) }
+        // Favorites, location edits etc. refresh the cached metadata (A0).
+        let stored = Dictionary(photos.map { ($0.id, $0.meta) }, uniquingKeysWith: { $1 })
+        applyMeta(changedIndexed.compactMap { asset in
+            var meta = photoService.baseMeta(for: asset)
+            meta.locateCity(reusing: stored[asset.localIdentifier])
+            return meta == stored[asset.localIdentifier] ? nil : (asset.localIdentifier, meta)
+        })
+
+        // Only pixel edits invalidate a vector; favorites, iCloud sync and on-device
+        // analysis also land in changedObjects and used to trigger re-embedding.
+        let edited = changedIndexed
+            .filter { change.changeDetails(for: $0)?.assetContentChanged == true }
+            .map(\.localIdentifier)
+        if !edited.isEmpty {
+            pipeline.enqueue(edited, excluding: [], dimension: dimension)
+        }
+
+        let removedFromIndex = details.removedObjects.map(\.localIdentifier).filter { indexedIDs.contains($0) }
+        if !removedFromIndex.isEmpty {
+            removeFromIndex(removedFromIndex)
+        }
+
+        // F5.1: new photos are only discoverable under Full access.
+        let insertedIDs = details.insertedObjects.map(\.localIdentifier)
+        if photoService.authorization == .authorized, !insertedIDs.isEmpty {
+            let fresh = insertedIDs.filter { !indexedIDs.contains($0) && !newAssetIDs.contains($0) }
+            if autoIndexNewPhotos {
+                importAssets(fresh)
+            } else if !fresh.isEmpty {
+                newAssetIDs.append(contentsOf: fresh)
+            }
+        }
+    }
+}
+
+/// App Group file the share extension (F6.3) leaves for the app.
+enum SharedImageInbox {
+    static let appGroup = "group.com.clothpath.mondigital"
+
+    static var url: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
+            .appendingPathComponent("shared-image")
+    }
+}

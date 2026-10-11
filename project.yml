@@ -1,0 +1,104 @@
+name: SemanticPhotos
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    # Kept in sync with the Xcode-side edits (signing team, recommended settings),
+    # so regenerating with `xcodegen generate` doesn't lose them.
+    DEVELOPMENT_TEAM: N9Q47Y2LQ4
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
+packages:
+  MediaPipe:
+    # Local vendored copy of mediapipe's Package.swift (tag v1.1.0, see Vendor/).
+    # MediaPipeTasksCommon uses .unsafeFlags(-all_load), which xcodebuild rejects
+    # for ANY remote package requirement (version/revision/branch), so the package
+    # must be referenced by local path, as documented in MediaPipe's Package.swift.
+    # Binary xcframeworks are still fetched+checksum-verified by SPM from dl.google.com.
+    path: Vendor/MediaPipeTasks
+targets:
+  SemanticPhotos:
+    type: application
+    platform: iOS
+    sources:
+      - path: SemanticPhotos
+    dependencies:
+      - package: MediaPipe
+        product: MediaPipeTasksRetrieval
+      - target: SemanticPhotosShare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital
+        GENERATE_INFOPLIST_FILE: YES
+        # Background modes and task identifiers (F2.8); merged with the generated keys.
+        INFOPLIST_FILE: Config/App-Info.plist
+        # App Group for the share extension (F6.3) and Background GPU Access (F2.8).
+        # The GPU entitlement needs a paid developer account; without it the app
+        # falls back to CPU in the background automatically.
+        CODE_SIGN_ENTITLEMENTS: Config/App.entitlements
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "SemanticPhotos 需要访问您的照片以在设备本地生成语义索引。所有处理均在本地完成,照片不会上传。"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait"
+        TARGETED_DEVICE_FAMILY: 1
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "0.5"
+        CURRENT_PROJECT_VERSION: "1"
+  SemanticPhotosShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital.share
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: "查找相似照片"
+        CODE_SIGN_ENTITLEMENTS: Config/Share.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: 1
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "0.5"
+        CURRENT_PROJECT_VERSION: "1"
+  SemanticPhotosTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SemanticPhotosTests
+    dependencies:
+      - target: SemanticPhotos
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+  SemanticPhotosUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SemanticPhotosUITests
+    dependencies:
+      - target: SemanticPhotos
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SemanticPhotos
+        SWIFT_VERSION: "5.0"
+schemes:
+  SemanticPhotos:
+    build:
+      targets:
+        SemanticPhotos: all
+        SemanticPhotosTests: [test]
+        SemanticPhotosUITests: [test]
+    test:
+      targets:
+        - SemanticPhotosTests
+        - SemanticPhotosUITests
