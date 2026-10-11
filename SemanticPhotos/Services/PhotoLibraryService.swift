@@ -1,5 +1,6 @@
 import Foundation
 import Photos
+import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -13,9 +14,6 @@ final class PhotoLibraryService: NSObject {
 
     /// Fired for every `PHPhotoLibraryDidChange` notification; AppModel diffs it.
     var onLibraryChange: ((PHChange) -> Void)?
-
-    /// Extra handler used by the import picker to reload while it is open.
-    var additionalChangeHandler: ((PHChange) -> Void)?
 
     /// Retained fetch result so `PHChange` diffs can be computed against it.
     private(set) var observedFetchResult: PHFetchResult<PHAsset>?
@@ -63,6 +61,17 @@ final class PhotoLibraryService: NSObject {
     func refreshAuthorization() {
         authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         registerObserverIfAuthorized()
+    }
+
+    /// F2.1 (T11): the Limited-access "管理" row opens the system's
+    /// limited-library picker; newly selected photos arrive through the
+    /// change observer and queue automatically (F5.1).
+    func presentLimitedLibraryPicker() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first,
+            let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController
+        else { return }
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root)
     }
 
     // MARK: - Fetching
@@ -345,7 +354,6 @@ extension PhotoLibraryService: PHPhotoLibraryChangeObserver {
         Task { @MainActor in
             self.cachedSelfieIDs = nil
             self.onLibraryChange?(changeInstance)
-            self.additionalChangeHandler?(changeInstance)
         }
     }
 }

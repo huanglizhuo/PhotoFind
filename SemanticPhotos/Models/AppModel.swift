@@ -49,8 +49,27 @@ final class AppModel {
     private var debounceTask: Task<Void, Never>?
     static let exampleQueries = ["海边日落", "猫", "雪山", "美食", "发票", "截图", "生日蛋糕", "夜景"]
 
-    // F5.1: newly added assets discovered by the observer (Full access only)
-    private(set) var newAssetIDs: [String] = []
+    // F2.1 (T11): onboarding replaces the UI until photo access (Limited or
+    // Full) has been granted. Before the user has answered the system prompt
+    // once, PhotoKit must not even be asked for the status — on iOS 26 that
+    // alone can surface the prompt — so until then the persisted flag below
+    // is the only input.
+    private(set) var needsOnboarding = true
+
+    /// F2.1 (T11): the system prompt has been answered at least once (possibly
+    /// with a denial) — the onboarding then shows its 去系统设置开启 state.
+    var wasPermissionRequested: Bool {
+        UserDefaults.standard.bool(forKey: "photoAccessGranted")
+    }
+
+    /// F2.1 (T11): the onboarding's denied state. The flag guard comes first
+    /// so a never-asked install never initializes PhotoKit from the UI — on
+    /// iOS 26 that alone can surface the system prompt.
+    var showsDeniedState: Bool {
+        guard wasPermissionRequested else { return false }
+        let status = photoService.authorization
+        return status == .denied || status == .restricted
+    }
 
     // F4.6: index/model mismatch
     private(set) var needsRebuild = false
@@ -75,10 +94,6 @@ final class AppModel {
     }
     var showScores: Bool {
         didSet { UserDefaults.standard.set(showScores, forKey: "showScores") }
-    }
-    /// F5.1: new photos go straight into the queue instead of the banner.
-    var autoIndexNewPhotos: Bool {
-        didSet { UserDefaults.standard.set(autoIndexNewPhotos, forKey: "autoIndexNewPhotos") }
     }
     /// F4.12 second pass, on by default.
     var textRecognitionEnabled: Bool {
@@ -123,11 +138,16 @@ final class AppModel {
         relevanceGap = defaults.object(forKey: "relevanceGap") as? Float ?? 0.04
         relevanceFloor = defaults.object(forKey: "relevanceFloor") as? Float ?? 0.68
         showScores = defaults.bool(forKey: "showScores")
-        autoIndexNewPhotos = defaults.bool(forKey: "autoIndexNewPhotos")
         textRecognitionEnabled = defaults.object(forKey: "textRecognitionEnabled") as? Bool ?? true
         debugToolsEnabled = defaults.bool(forKey: "debugToolsEnabled")
         recentSearches = defaults.stringArray(forKey: "recentSearches") ?? []
         background.onOvernightLaunch = { [weak self] in self?.runOvernight() }
+        // F2.1 (T11): reading the status is only safe once the prompt has been
+        // answered at least once; a fresh install must stay off PhotoKit.
+        if defaults.bool(forKey: "photoAccessGranted") {
+            photoService.refreshAuthorization()
+            needsOnboarding = !photoService.canImport
+        }
     }
 
     // MARK: - Launch
@@ -142,6 +162,7 @@ final class AppModel {
         configureEngine()
         observePowerAndHeat()
         Task {
+            if Self.resetIndexRequested { try? await store.clearAll() }
             await reloadIndex()
             await pipeline.restore(dimension: dimension)
         }
@@ -157,17 +178,35 @@ final class AppModel {
 
         // Only touch PhotoKit at launch after access was granted once (flag is
         // set in photoServiceAuthorized()); a fresh install must see zero
-        // photo-library activity until the pre-permission sheet (F2.1).
+        // photo-library activity until the onboarding page (F2.1) is answered.
         if UserDefaults.standard.bool(forKey: "photoAccessGranted") {
             photoService.refreshAuthorization()
+            needsOnboarding = !photoService.canImport
             if photoService.canImport {
                 photoService.allPhotos()
                 photoService.onLibraryChange = { [weak self] change in
                     self?.handleLibraryChange(change)
                 }
-                Task { await validateIndexOnColdStart() }
+                Task {
+                    await validateIndexOnColdStart()
+                    // F2.8 (T11): catch up on photos added or failed while the
+                    // app wasn't running; not user-initiated, so no
+                    // BGContinuedProcessingTask.
+                    indexUnindexed(userInitiated: false)
+                }
             }
         }
+    }
+
+    /// UI tests only (T11): `-resetIndex` wipes vectors and the pending queue
+    /// at launch so a full indexing run can be observed. Debug builds only;
+    /// a normal launch never clears anything.
+    private static var resetIndexRequested: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-resetIndex")
+        #else
+        false
+        #endif
     }
 
     /// F1.11 (T2): the model is bundled and always ready; launch only
@@ -178,9 +217,13 @@ final class AppModel {
         Task.detached(priority: .utility) { try? await engine.warmUp() }
     }
 
-    /// Called after the user grants photo access for the first time.
+    /// F2.1 (T11): the system prompt has been answered — from the onboarding
+    /// 开始 button, or back from Settings after granting. Wires up the library
+    /// and closes the onboarding once access (Limited or Full) has arrived.
     func photoServiceAuthorized() {
         UserDefaults.standard.set(true, forKey: "photoAccessGranted")
+        photoService.refreshAuthorization()
+        needsOnboarding = !photoService.canImport
         guard photoService.canImport else { return }
         photoService.allPhotos()
         if photoService.onLibraryChange == nil {
@@ -199,6 +242,15 @@ final class AppModel {
             isInForeground = true
             Task { await engine.setDelegate(.gpu, fallbackToCPU: false) }
             checkSharedImage()
+            // F2.1 (T11): returning from Settings after granting — the flag
+            // guard keeps PhotoKit untouched for never-asked installs.
+            if needsOnboarding, wasPermissionRequested {
+                photoService.refreshAuthorization()
+                if photoService.canImport {
+                    photoServiceAuthorized()
+                    indexUnindexed(userInitiated: false)
+                }
+            }
         case .background:
             isInForeground = false
             let gpu = background.hasBackgroundGPU
@@ -270,7 +322,6 @@ final class AppModel {
         // Keep newest-capture-first order (F3.1).
         let index = photos.firstIndex { $0.sortDate < photo.sortDate } ?? photos.endIndex
         photos.insert(photo, at: index)
-        newAssetIDs.removeAll { $0 == photo.id }
         lastModelUse = Date()
     }
 
@@ -280,48 +331,37 @@ final class AppModel {
         background.finish(success: true)
     }
 
-    // MARK: - Import (F2)
+    // MARK: - Full-library indexing (F2.8, T11)
 
-    /// Queues photos newest-first so the ones people look for most become
-    /// searchable soonest (F2.8).
-    func importAssets(_ ids: [String]) {
-        let dates = photoService.assetsMap(for: ids).mapValues { $0.creationDate ?? .distantPast }
-        let ordered = ids.sorted { (dates[$0] ?? .distantPast) > (dates[$1] ?? .distantPast) }
-        let before = pipeline.pendingCount
-        pipeline.enqueue(ordered, excluding: indexedIDs, dimension: dimension)
-        Task { await updateIndexConfigIfNeeded() }
-        if pipeline.pendingCount > before {
-            background.beginContinuedProcessing(total: pipeline.pendingCount)
-        }
-    }
-
-    /// Every visible photo not yet indexed (F2.8 "索引全部").
-    func unindexedPhotoIDs() -> [String] {
+    /// Queues every photo the user allowed access to but that isn't indexed
+    /// yet, newest capture first — `allPhotos()` already sorts that way, so
+    /// the old "look the dates up, then re-sort" second full fetch is gone.
+    /// Also writes the IndexConfig, without which the F4.6 consistency check
+    /// would never fire. `userInitiated` marks the run started from the
+    /// onboarding 开始 button — the only one allowed to ask for a
+    /// BGContinuedProcessingTask (F2.8).
+    func indexUnindexed(userInitiated: Bool) {
+        // T6's uitestDropPendingQueue asks for an idle app; don't refill the
+        // queue it just dropped. Never set in normal use.
+        guard !ProcessInfo.processInfo.arguments.contains(where: { $0.contains("uitestDropPendingQueue") }),
+              photoService.canImport else { return }
         let indexed = indexedIDs
         var ids: [String] = []
         photoService.allPhotos().enumerateObjects { asset, _, _ in
             if !indexed.contains(asset.localIdentifier) { ids.append(asset.localIdentifier) }
         }
-        return ids
-    }
-
-    func indexAllPhotos() {
-        importAssets(unindexedPhotoIDs())
+        guard !ids.isEmpty else { return }
+        let before = pipeline.pendingCount
+        pipeline.enqueue(ids, excluding: indexed, dimension: dimension)
+        Task { await updateIndexConfigIfNeeded() }
+        if userInitiated, pipeline.pendingCount > before {
+            background.beginContinuedProcessing(total: pipeline.pendingCount)
+        }
     }
 
     private func updateIndexConfigIfNeeded() async {
         let config = EmbeddingStore.IndexConfig(modelVersion: ModelFile.version, dimension: dimension)
         try? await store.setIndexConfig(config)
-    }
-
-    func importNewAssets() {
-        let ids = newAssetIDs
-        newAssetIDs = []
-        importAssets(ids)
-    }
-
-    func dismissNewAssetsBanner() {
-        newAssetIDs = []
     }
 
     /// F5.2: drops rows the library no longer shows (deleted, hidden or outside
@@ -489,12 +529,10 @@ final class AppModel {
 
     func rebuildIndex() {
         Task {
-            let ids = photos.map(\.id)
             try? await store.clearAll()
-            try? await store.setIndexConfig(.init(modelVersion: ModelFile.version, dimension: dimension))
             photos = []
             needsRebuild = false
-            importAssets(ids)
+            indexUnindexed(userInitiated: true)
         }
     }
 
@@ -592,15 +630,12 @@ final class AppModel {
             removeFromIndex(removedFromIndex)
         }
 
-        // F5.1: new photos are only discoverable under Full access.
-        let insertedIDs = details.insertedObjects.map(\.localIdentifier)
-        if photoService.authorization == .authorized, !insertedIDs.isEmpty {
-            let fresh = insertedIDs.filter { !indexedIDs.contains($0) && !newAssetIDs.contains($0) }
-            if autoIndexNewPhotos {
-                importAssets(fresh)
-            } else if !fresh.isEmpty {
-                newAssetIDs.append(contentsOf: fresh)
-            }
+        // F5.1 (T11): new assets queue straight away, Full and Limited alike —
+        // under Limited the observer only reports the selected set anyway, so
+        // this also covers an expanded limited-library selection.
+        let fresh = details.insertedObjects.map(\.localIdentifier).filter { !indexedIDs.contains($0) }
+        if !fresh.isEmpty {
+            pipeline.enqueue(fresh, excluding: indexedIDs, dimension: dimension)
         }
     }
 }

@@ -10,9 +10,56 @@ final class SemanticPhotosUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
+        // T11 (F2.1): an already-authorized environment lands straight in the
+        // main UI; otherwise get through the onboarding page and its system
+        // prompt so the tests that follow always see the main UI.
+        if !searchField.waitForExistence(timeout: 10) {
+            grantPhotoAccessFromOnboarding()
+            _ = searchField.waitForExistence(timeout: 30)
+        }
     }
 
     // MARK: - Helpers
+
+    /// T11 (F2.1): taps 开始 and answers the system photo-permission alert.
+    /// The alert belongs to a remote process — invisible to plain queries — and
+    /// only surfaces through an interruption monitor, which needs one further
+    /// interaction (the extra app.tap()) to run. Already granted, this is a
+    /// no-op. The simulator's system language decides the button labels, so
+    /// match by substring in both Chinese and English — the alert must never
+    /// be left unanswered, or it auto-denies.
+    private func grantPhotoAccessFromOnboarding() {
+        let start = app.buttons["开始"]
+        guard start.waitForExistence(timeout: 5) else { return }
+        addUIInterruptionMonitor(withDescription: "照片权限") { alert in
+            let full = alert.buttons.allElementsBoundByIndex
+                .filter { $0.label.contains("完全") || $0.label.contains("Full")
+                          || $0.label.contains("所有照片") || $0.label.contains("All Photos") }
+            guard !full.isEmpty else { return false }
+            full[0].tap()
+            return true
+        }
+        start.tap()
+        // The alert swallows the next touch, which wakes the monitor; repeat
+        // until the main UI (its search field) takes over.
+        for _ in 0..<4 where !searchField.exists {
+            sleep(1)
+            app.tap()
+        }
+    }
+
+    /// The pill / empty state saying indexing is running (F0.2 / F3.6). Matches
+    /// the progress format "正在建立索引 N/M · …", not the empty state's
+    /// "正在建立索引…", so the parsed count is never garbage.
+    private var indexingLabel: XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label MATCHES '正在建立索引 [0-9]+/[0-9]+.*'")).firstMatch
+    }
+
+    /// Completed count out of the pill's "正在建立索引 N/M" text.
+    private func indexedDone(_ pill: XCUIElement) -> Int {
+        guard pill.exists else { return -1 }
+        return Int(pill.label.components(separatedBy: "正在建立索引 ").last?.components(separatedBy: "/").first ?? "") ?? -1
+    }
 
     private var grid: XCUIElement { app.collectionViews["photoGrid"] }
     private var searchField: XCUIElement { app.textFields.firstMatch }
@@ -208,55 +255,66 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["完成"].tap()
     }
 
-    // MARK: - Import picker (F2.1 / F2.8 / F7.2)
+    // MARK: - Onboarding & full-library indexing (F2.1 / F2.8 / F7.2, T11)
 
-    func testImportPickerQuickActions() throws {
-        try requireModel()
-        app.buttons["导入照片"].tap()
-        guard app.collectionViews["pickerGrid"].waitForExistence(timeout: 10) else { throw XCTSkip("没有照片访问权限") }
-        XCTAssertTrue(app.buttons["最近 200 张"].exists)
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH '索引全部'")).firstMatch.exists)
-        app.buttons["取消"].tap()
+    /// Fresh permission + empty index: onboarding → 开始 → allow → indexing
+    /// starts on its own (no import UI anymore).
+    func testOnboardingStartsIndexing() throws {
+        app.terminate()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-resetIndex"]
+        app.launch()
+        XCTAssertTrue(app.buttons["开始"].waitForExistence(timeout: 10), "未授权时应显示首启页")
+        grantPhotoAccessFromOnboarding()
+        // F7.2: indexing begins the moment access arrives — progress pill or
+        // the grid's "正在建立索引…" empty state, either counts.
+        let indexing = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '正在建立索引'")).firstMatch
+        XCTAssertTrue(indexing.waitForExistence(timeout: 30), "授权后应自动开始全库索引")
+        // Leave an idle app for the tests that follow.
+        app.terminate()
+        app.launchArguments = ["uitestDropPendingQueue"]
+        app.launch()
     }
 
     // MARK: - Embedding holds while scrolling (F2.3)
 
+    /// T11 (F2.8): `-resetIndex` relaunches into an automatic full-library
+    /// run; F2.3's pause-while-scrolling is measured on that run.
     func testEmbeddingPausesWhileScrolling() throws {
-        try requireIndexedPhotos()
+        app.terminate()
+        app.launchArguments = ["-resetIndex"]
+        app.launch()
         try requireModel()
-        app.buttons["导入照片"].tap()
-        guard app.collectionViews["pickerGrid"].waitForExistence(timeout: 10) else { throw XCTSkip("没有照片访问权限") }
-        let indexAll = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '索引全部'")).firstMatch
-        guard indexAll.isEnabled, let count = Int(indexAll.label.filter(\.isNumber)), count >= 60 else {
-            app.buttons["取消"].tap()
-            throw XCTSkip("需要至少 60 张未索引的照片")
+        let pill = indexingLabel
+        XCTAssertTrue(pill.waitForExistence(timeout: 30), "清空索引后应自动开始全库索引")
+        // The pill shows as soon as photos are queued, but the bundled model
+        // loads in the background; wait until embeddings actually complete
+        // before comparing rates.
+        var settled = false
+        for _ in 0..<90 where !settled {
+            settled = indexedDone(pill) >= 2
+            if !settled { sleep(1) }
         }
-        indexAll.tap()
-        // T6 (F0.2): display-only capsule, "正在建立索引 已完成/总数 · 预计剩余".
-        let pill = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '正在建立索引'")).firstMatch
-        func done() -> Int {
-            guard pill.exists else { return -1 }
-            return Int(pill.label.components(separatedBy: "正在建立索引 ").last?.components(separatedBy: "/").first ?? "") ?? -1
-        }
-        sleep(3)
+        XCTAssertTrue(settled, "索引应开始推进")
+        sleep(2)
         // Compare rates rather than counts: reading the pill takes time too.
         let start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
         let end = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
-        let t0 = Date(), d0 = done()
+        let t0 = Date(), d0 = indexedDone(pill)
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: XCUIGestureVelocity(50), thenHoldForDuration: 0)
-        let d1 = done(), t1 = Date()
+        let d1 = indexedDone(pill), t1 = Date()
         sleep(9)
-        let d2 = done(), t2 = Date()
+        let d2 = indexedDone(pill), t2 = Date()
         let dragRate = Double(d1 - d0) / t1.timeIntervalSince(t0)
         let idleRate = Double(d2 - d1) / t2.timeIntervalSince(t1)
         print("embedding rate while dragging \(dragRate)/s, idle \(idleRate)/s (\(d0)→\(d1)→\(d2))")
         XCTAssertGreaterThan(idleRate, 0, "静止时应在推理")
         XCTAssertLessThan(dragRate, idleRate * 0.35, "拖动期间推理应基本暂停")
-        // T6 (F2.5): indexing can't be cancelled anymore. Relaunch with the
-        // test-only launch argument so the persisted queue is dropped and no
-        // indexing work leaks into the tests that follow.
+        // T6 (F2.5): indexing can't be cancelled. Relaunch with the test-only
+        // launch argument so the persisted queue is dropped and no indexing
+        // work leaks into the tests that follow.
         app.terminate()
-        app.launchArguments.append("uitestDropPendingQueue")
+        app.launchArguments = ["uitestDropPendingQueue"]
         app.launch()
     }
 }

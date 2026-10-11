@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @State private var showImportFlow = false
     @State private var showSettings = false
     @State private var detailPhotoID: String?
     /// Multi-select mode (F4.11); nil when off.
@@ -28,6 +27,18 @@ struct ContentView: View {
     }
 
     var body: some View {
+        // F2.1 (T11): the onboarding page owns the screen until photo access
+        // (Limited or Full) has been granted; nothing else may touch PhotoKit
+        // before that.
+        if model.needsOnboarding {
+            OnboardingView()
+        } else {
+            mainUI
+        }
+    }
+
+    @ViewBuilder
+    private var mainUI: some View {
         @Bindable var model = model
         NavigationStack {
             ZStack(alignment: .bottom) {
@@ -45,14 +56,13 @@ struct ContentView: View {
                     if let selection {
                         selectionBar(selection)
                     } else {
+                        // F2.1 (T11): permanent row under Limited access.
+                        if model.photoService.authorization == .limited {
+                            limitedRow
+                        }
                         if model.needsRebuild {
                             banner("模型配置已变更,需要重建索引", actionTitle: "重建") {
                                 model.rebuildIndex()
-                            }
-                        }
-                        if !model.newAssetIDs.isEmpty {
-                            banner("发现 \(model.newAssetIDs.count) 张新照片", actionTitle: "导入") {
-                                model.importNewAssets()
                             }
                         }
                         if showPill {
@@ -66,7 +76,6 @@ struct ContentView: View {
                 .padding(.bottom, 8)
                 .animation(.easeOut(duration: 0.3), value: showPill)
                 .animation(.easeOut(duration: 0.3), value: model.needsRebuild)
-                .animation(.easeOut(duration: 0.3), value: model.newAssetIDs.isEmpty)
                 .animation(.easeOut(duration: 0.3), value: toast)
                 .animation(.easeOut(duration: 0.25), value: selection == nil)
             }
@@ -74,7 +83,6 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
         }
-        .sheet(isPresented: $showImportFlow) { ImportFlowView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
         .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
@@ -111,10 +119,6 @@ struct ContentView: View {
             }
         } else {
             ToolbarItemGroup(placement: .topBarLeading) {
-                // F7.1: the queue is always free to start; the model is bundled (F1.11).
-                Button { showImportFlow = true } label: {
-                    Label("导入照片", systemImage: "plus")
-                }
                 if !shownIDs.isEmpty {
                     Button("选择") { self.selection = [] }
                 }
@@ -183,6 +187,29 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(2.5))
             if toast == message { toast = nil }
         }
+    }
+
+    /// F2.1 (T11): "仅部分照片可搜 · 管理" sits above the search bar under
+    /// Limited access. The whole capsule is the button, so no tap reaches the
+    /// UIKit grid underneath.
+    private var limitedRow: some View {
+        Button {
+            model.photoService.presentLimitedLibraryPicker()
+        } label: {
+            HStack {
+                Text("仅部分照片可搜 · 管理")
+                    .font(.footnote)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .foregroundStyle(.primary)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
     private func banner(_ title: String, actionTitle: String, action: @escaping () -> Void) -> some View {

@@ -77,22 +77,31 @@ struct PhotoGridView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             if model.searchResults != nil {
-                Image(systemName: "magnifyingglass")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                Text("没有找到匹配的照片")
+                if model.pipeline.hasWork {
+                    // F4.3: nothing matched because the index is still being built.
+                    Text("照片还在建立索引")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "magnifyingglass")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("没有找到匹配的照片")
+                        .foregroundStyle(.secondary)
+                }
+            } else if model.pipeline.hasWork || model.photoService.allPhotos().count > 0 {
+                // F3.6 (T11): indexing with an empty grid (Full and Limited
+                // access is decided before the grid can appear, F2.1); a
+                // non-empty library with nothing indexed is on its way into
+                // the queue, so it reads the same.
+                ProgressView()
+                Text("正在建立索引…")
                     .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "photo.on.rectangle.angled")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text("还没有导入照片")
+                Text("相册里还没有照片")
                     .foregroundStyle(.secondary)
-                if model.photoService.authorization == .authorized {
-                    // F2.8: the empty grid is the natural place to start indexing everything.
-                    Button("索引全部照片") { model.indexAllPhotos() }
-                        .buttonStyle(.borderedProminent)
-                }
             }
         }
     }
@@ -352,11 +361,11 @@ private final class DividerView: UICollectionReusableView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 }
 
-// MARK: - Shared with the import picker (ImportPickerView)
+// MARK: - Grid plumbing
 
-/// Collection-view plumbing for both photo grids: thumbnail requests and
+/// Collection-view plumbing for the photo grid: thumbnail requests and
 /// PHCachingImageManager prefetching (F3.3), and holding embedding while the
-/// user scrolls. Subclasses own the data and map index paths to assets.
+/// user scrolls. The coordinator owns the data and maps index paths to assets.
 @MainActor
 class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
     let collectionView: UICollectionView

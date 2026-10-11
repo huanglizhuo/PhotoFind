@@ -1,8 +1,8 @@
 import Photos
 import SwiftUI
 
-/// Settings: embedding dimension and rebuild (F4.6), indexing options
-/// (F4.12 / F5.1), privacy and about (F0.8), and the debug tools — relevance
+/// Settings: embedding dimension and rebuild (F4.6), text recognition
+/// (F4.12), privacy and about (F0.8), and the debug tools — relevance
 /// gap, score badges, evaluation (F4.3 / F8). The model ships in the bundle
 /// (F1.11), so there is nothing to manage here.
 struct SettingsView: View {
@@ -30,12 +30,10 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("识别图中文字", isOn: $model.textRecognitionEnabled)
-                    Toggle("自动索引新照片", isOn: $model.autoIndexNewPhotos)
-                        .disabled(model.photoService.authorization != .authorized)
                 } header: {
                     Text("索引")
                 } footer: {
-                    Text("文字识别在嵌入之后进行,用来搜索截图、票据里的文字。自动索引新照片需要\u{201C}完整\u{201D}照片访问权限。")
+                    Text("文字识别在嵌入之后进行,用来搜索截图、票据里的文字。新照片会自动加入索引。")
                 }
 
                 Section {
