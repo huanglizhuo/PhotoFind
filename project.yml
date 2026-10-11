@@ -25,6 +25,11 @@ targets:
     platform: iOS
     sources:
       - path: SemanticPhotos
+      # T2 (F1.11): the model ships in the bundle; xcodegen fails here when the
+      # file is missing, so no model-less build can slip out. Fetch it with
+      # Tools/fetch_model.sh (kept out of git via .gitignore).
+      - path: Model/embeddinggemma-2-text-vision-440m.litertlm
+        buildPhase: resources
     dependencies:
       - package: MediaPipe
         product: MediaPipeTasksRetrieval

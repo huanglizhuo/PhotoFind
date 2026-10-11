@@ -15,12 +15,10 @@ final class EmbeddingPipeline {
 
     /// Why queued work isn't running, shown in the progress pill (F2.4).
     enum PauseReason: Hashable {
-        case modelOff, modelNotReady, lowPower, thermal
+        case lowPower, thermal
 
         var text: String {
             switch self {
-            case .modelOff: return "模型已关闭"
-            case .modelNotReady: return "等待模型下载完成"
             case .lowPower: return "低电量模式"
             case .thermal: return "设备过热"
             }
@@ -96,7 +94,7 @@ final class EmbeddingPipeline {
     /// Queue writes run one after another, so "add" can't land after "remove".
     @ObservationIgnored private var storeWrites: Task<Void, Never>?
 
-    private var modelVersion = ModelDownloadManager.modelVersion
+    private var modelVersion = ModelFile.version
     private var dimension = 256
 
     /// ETA from this session's average time per photo (F2.4).

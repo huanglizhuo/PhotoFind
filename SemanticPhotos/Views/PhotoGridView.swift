@@ -92,9 +92,9 @@ struct PhotoGridView: View {
                 Image(systemName: "photo.on.rectangle.angled")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text(model.isModelReady ? "还没有导入照片" : "请先下载模型,然后导入照片")
+                Text("还没有导入照片")
                     .foregroundStyle(.secondary)
-                if model.isModelReady, model.photoService.authorization == .authorized {
+                if model.photoService.authorization == .authorized {
                     // F2.8: the empty grid is the natural place to start indexing everything.
                     Button("索引全部照片") { model.indexAllPhotos() }
                         .buttonStyle(.borderedProminent)

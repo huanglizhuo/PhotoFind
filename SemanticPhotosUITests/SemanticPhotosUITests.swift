@@ -10,11 +10,6 @@ final class SemanticPhotosUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
-        // The model page opens on launch when the model isn't ready; its 完成 only
-        // enables once the model is, so tapping it is harmless otherwise.
-        if app.navigationBars["模型"].waitForExistence(timeout: 2) {
-            app.buttons["完成"].tap()
-        }
     }
 
     // MARK: - Helpers
@@ -29,7 +24,7 @@ final class SemanticPhotosUITests: XCTestCase {
     }
 
     private func requireModel() throws {
-        guard searchField.waitForExistence(timeout: 10) else { throw XCTSkip("模型未就绪或已关闭") }
+        guard searchField.waitForExistence(timeout: 10) else { throw XCTSkip("搜索框未出现") }
     }
 
     private var detailOpen: Bool { app.buttons["关闭"].exists && app.buttons["相似"].exists }
@@ -176,19 +171,6 @@ final class SemanticPhotosUITests: XCTestCase {
             XCTAssertFalse(detailOpen, "点击搜索框空白处不应打开照片")
             if app.keyboards.count > 0 { app.typeText("\n") }
         }
-    }
-
-    // MARK: - Model switch (F1.9)
-
-    func testModelSwitchTogglesSearch() throws {
-        try requireModel()
-        let toggle = app.buttons["加载并运行模型"]
-        XCTAssertTrue(toggle.exists)
-        toggle.tap()
-        let hint = app.buttons["模型已关闭,点击开启"]
-        XCTAssertTrue(hint.waitForExistence(timeout: 5))
-        hint.tap()
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
     }
 
     // MARK: - Filters (F4.8) and selection (F4.11)

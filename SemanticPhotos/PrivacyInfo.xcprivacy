@@ -20,24 +20,6 @@
 				<string>CA92.1</string>
 			</array>
 		</dict>
-		<dict>
-			<!-- Model file size check after download (F1.4), inside the app container. -->
-			<key>NSPrivacyAccessedAPIType</key>
-			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
-			<key>NSPrivacyAccessedAPITypeReasons</key>
-			<array>
-				<string>C617.1</string>
-			</array>
-		</dict>
-		<dict>
-			<!-- Free-space check before the 370 MB model download (F1.5). -->
-			<key>NSPrivacyAccessedAPIType</key>
-			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
-			<key>NSPrivacyAccessedAPITypeReasons</key>
-			<array>
-				<string>E174.1</string>
-			</array>
-		</dict>
 	</array>
 </dict>
 </plist>

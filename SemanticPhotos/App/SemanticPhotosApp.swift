@@ -26,10 +26,4 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         AppModel.shared.background.registerOvernightHandler()
         return true
     }
-
-    func application(_ application: UIApplication,
-                     handleEventsForBackgroundURLSession identifier: String,
-                     completionHandler: @escaping () -> Void) {
-        ModelDownloadManager.shared.backgroundCompletionHandler = completionHandler
-    }
 }

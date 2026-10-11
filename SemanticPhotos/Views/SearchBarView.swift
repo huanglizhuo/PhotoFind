@@ -5,16 +5,15 @@ import SwiftUI
 /// search tip (F7.3).
 struct SearchBarView: View {
     @Environment(AppModel.self) private var model
-    let onDownloadRequest: () -> Void
     @FocusState private var focused: Bool
 
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 10) {
-            if focused, model.searchText.isEmpty, model.canRunModel {
+            if focused, model.searchText.isEmpty {
                 SearchGuideView(onPick: pick)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.showFirstSearchTip, model.canRunModel, model.searchResults == nil {
+            } else if model.showFirstSearchTip, model.searchResults == nil {
                 FirstSearchTip(onPick: pick, onDismiss: model.dismissFirstSearchTip)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -23,24 +22,13 @@ struct SearchBarView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
 
-                if model.canRunModel {
-                    // A search without typed text (相似照片) shows its title as the placeholder.
-                    TextField(model.searchTitle ?? "描述你想找的照片…", text: $model.searchText)
-                        .focused($focused)
-                        .submitLabel(.search)
-                        .autocorrectionDisabled()
-                        .onSubmit { model.submitSearch() }
-                        .onChange(of: model.searchText) { _, _ in model.searchTextChanged() }
-                } else {
-                    Button {
-                        if model.isModelReady { model.modelEnabled = true } else { onDownloadRequest() }
-                    } label: {
-                        Text(model.isModelReady ? "模型已关闭,点击开启" : "下载模型后开始搜索")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-                }
+                // A search without typed text (相似照片) shows its title as the placeholder.
+                TextField(model.searchTitle ?? "描述你想找的照片…", text: $model.searchText)
+                    .focused($focused)
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .onSubmit { model.submitSearch() }
+                    .onChange(of: model.searchText) { _, _ in model.searchTextChanged() }
 
                 if model.isSearching {
                     if model.isModelLoading {

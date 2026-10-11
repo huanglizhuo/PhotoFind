@@ -2,12 +2,12 @@ import Photos
 import SwiftUI
 
 /// Settings: embedding dimension and rebuild (F4.6), indexing options
-/// (F4.12 / F5.1), model management (F1.7), privacy and about (F0.8), and the
-/// debug tools — relevance gap, score badges, evaluation (F4.3 / F8).
+/// (F4.12 / F5.1), privacy and about (F0.8), and the debug tools — relevance
+/// gap, score badges, evaluation (F4.3 / F8). The model ships in the bundle
+/// (F1.11), so there is nothing to manage here.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var showDownload = false
 
     var body: some View {
         @Bindable var model = model
@@ -36,14 +36,6 @@ struct SettingsView: View {
                     Text("索引")
                 } footer: {
                     Text("文字识别在嵌入之后进行,用来搜索截图、票据里的文字。自动索引新照片需要\u{201C}完整\u{201D}照片访问权限。")
-                }
-
-                Section("模型") {
-                    LabeledContent("状态") {
-                        Text(model.modelManager.state == .ready ? "已就绪" : "未下载")
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("模型管理") { showDownload = true }
                 }
 
                 Section {
@@ -83,7 +75,6 @@ struct SettingsView: View {
                     Button("完成") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showDownload) { DownloadView() }
         }
     }
 

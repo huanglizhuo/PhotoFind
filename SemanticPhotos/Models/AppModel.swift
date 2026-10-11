@@ -11,7 +11,6 @@ final class AppModel {
     /// Intents all reach the same state.
     static let shared = AppModel()
 
-    let modelManager = ModelDownloadManager.shared
     /// Lazy: merely initializing PhotoKit (status checks, PHCachingImageManager)
     /// can surface the system permission prompt on iOS 26 before our
     /// pre-permission sheet (F2.1) is shown. Nothing photo-related may run
@@ -84,13 +83,6 @@ final class AppModel {
     var showScores: Bool {
         didSet { UserDefaults.standard.set(showScores, forKey: "showScores") }
     }
-    /// Toolbar switch (F1.9): off unloads the model and stops all inference.
-    var modelEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(modelEnabled, forKey: "modelEnabled")
-            applyModelState()
-        }
-    }
     /// F5.1: new photos go straight into the queue instead of the banner.
     var autoIndexNewPhotos: Bool {
         didSet { UserDefaults.standard.set(autoIndexNewPhotos, forKey: "autoIndexNewPhotos") }
@@ -115,9 +107,6 @@ final class AppModel {
     private var lastModelUse = Date()
     private var isInForeground = true
 
-    var isModelReady: Bool { modelManager.state == .ready }
-    /// Downloaded and switched on: the only state in which embedding/search run.
-    var canRunModel: Bool { isModelReady && modelEnabled }
     var indexedIDs: Set<String> { Set(photos.map(\.id)) }
 
     /// Lazily created so constructing the pipeline never touches PhotoKit.
@@ -143,7 +132,6 @@ final class AppModel {
         relevanceGap = defaults.object(forKey: "relevanceGap") as? Float ?? 0.04
         relevanceFloor = defaults.object(forKey: "relevanceFloor") as? Float ?? 0.68
         showScores = defaults.bool(forKey: "showScores")
-        modelEnabled = defaults.object(forKey: "modelEnabled") as? Bool ?? true
         autoIndexNewPhotos = defaults.bool(forKey: "autoIndexNewPhotos")
         textRecognitionEnabled = defaults.object(forKey: "textRecognitionEnabled") as? Bool ?? true
         debugToolsEnabled = defaults.bool(forKey: "debugToolsEnabled")
@@ -157,8 +145,8 @@ final class AppModel {
     func onLaunch() {
         guard !launched else { return }
         launched = true
-        modelManager.refreshState()
-        applyModelState()
+        ModelFile.removeLegacyDownloads()
+        configureEngine()
         observePowerAndHeat()
         Task {
             await reloadIndex()
@@ -189,26 +177,12 @@ final class AppModel {
         }
     }
 
-    func modelStateChanged() {
-        applyModelState()
-        if isModelReady { Task { await checkIndexConsistency() } }
-    }
-
-    /// Loads (F2.3 预热) or unloads the model to match `canRunModel`. While it
-    /// can't run, the engine refuses to load, the pipeline keeps its queue
-    /// paused and search is cleared.
-    private func applyModelState() {
+    /// F1.11 (T2): the model is bundled and always ready; launch only
+    /// configures the engine and warms it up in the background (F2.3 预热).
+    private func configureEngine() {
         let engine = engine
-        if canRunModel {
-            engine.configure(modelPath: modelManager.modelFileURL.path)
-            Task.detached(priority: .utility) { try? await engine.warmUp() }
-        } else {
-            engine.configure(modelPath: nil)
-            clearSearch()
-            Task { await engine.unload() }
-        }
-        pipeline.setPaused(.modelNotReady, !isModelReady)
-        pipeline.setPaused(.modelOff, isModelReady && !modelEnabled)
+        engine.configure(modelPath: ModelFile.url.path)
+        Task.detached(priority: .utility) { try? await engine.warmUp() }
     }
 
     /// Called after the user grants photo access for the first time.
@@ -350,7 +324,7 @@ final class AppModel {
     }
 
     private func updateIndexConfigIfNeeded() async {
-        let config = EmbeddingStore.IndexConfig(modelVersion: ModelDownloadManager.modelVersion, dimension: dimension)
+        let config = EmbeddingStore.IndexConfig(modelVersion: ModelFile.version, dimension: dimension)
         try? await store.setIndexConfig(config)
     }
 
@@ -439,7 +413,6 @@ final class AppModel {
             if searchTitle == nil { clearSearch() }
             return
         }
-        guard canRunModel else { return }
         isSearching = true
         searchError = nil
         searchTitle = nil
@@ -505,7 +478,6 @@ final class AppModel {
     /// F6.3: an image shared from another app; embedding happens here, not in
     /// the extension.
     func showSimilar(toImage image: UIImage) {
-        guard canRunModel else { return }
         isSearching = true
         searchTask?.cancel()
         searchTask = Task { [weak self] in
@@ -551,7 +523,7 @@ final class AppModel {
     // MARK: - Shared image inbox (F6.3)
 
     private func checkSharedImage() {
-        guard canRunModel, let url = SharedImageInbox.url,
+        guard let url = SharedImageInbox.url,
               let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
         try? FileManager.default.removeItem(at: url)
         showSimilar(toImage: image)
@@ -583,14 +555,14 @@ final class AppModel {
             needsRebuild = false
             return
         }
-        needsRebuild = config.modelVersion != ModelDownloadManager.modelVersion || config.dimension != dimension
+        needsRebuild = config.modelVersion != ModelFile.version || config.dimension != dimension
     }
 
     func rebuildIndex() {
         Task {
             let ids = photos.map(\.id)
             try? await store.clearAll()
-            try? await store.setIndexConfig(.init(modelVersion: ModelDownloadManager.modelVersion, dimension: dimension))
+            try? await store.setIndexConfig(.init(modelVersion: ModelFile.version, dimension: dimension))
             photos = []
             needsRebuild = false
             importAssets(ids)

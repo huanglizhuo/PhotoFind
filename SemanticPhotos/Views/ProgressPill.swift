@@ -41,27 +41,16 @@ struct ProgressPill: View {
 
     private var pipeline: EmbeddingPipeline { model.pipeline }
 
-    private var isDownloading: Bool {
-        [.downloading, .verifying, .paused].contains(model.modelManager.state)
-    }
-
     private var title: String {
-        switch model.modelManager.state {
-        case .downloading: return "正在下载模型"
-        case .verifying: return "正在校验模型"
-        case .paused: return "下载已暂停"
-        default:
-            // F2.4: say why queued work isn't moving.
-            if pipeline.isPaused, let reason = pipeline.pauseReasons.first, !pipeline.isRunning {
-                return "已暂停：\(reason.text)"
-            }
-            return pipeline.progressText
+        // F2.4: say why queued work isn't moving.
+        if pipeline.isPaused, let reason = pipeline.pauseReasons.first, !pipeline.isRunning {
+            return "已暂停：\(reason.text)"
         }
+        return pipeline.progressText
     }
 
     private var progressValue: Double? {
-        if model.modelManager.state == .downloading { return model.modelManager.progress }
-        if isDownloading || (pipeline.isPaused && !pipeline.isRunning) { return nil }
+        if pipeline.isPaused && !pipeline.isRunning { return nil }
         let (done, total) = pipeline.phase == .embed
             ? (pipeline.embedDone, pipeline.embedTotal)
             : (pipeline.textDone, pipeline.textTotal)
@@ -69,11 +58,7 @@ struct ProgressPill: View {
     }
 
     private var trailingText: String {
-        switch model.modelManager.state {
-        case .verifying, .paused: return ""
-        case .downloading: return "\(Int(model.modelManager.progress * 100))%"
-        default: return "剩余 \(pipeline.pendingCount) 张"
-        }
+        "剩余 \(pipeline.pendingCount) 张"
     }
 }
 
@@ -103,13 +88,6 @@ struct ProgressDetailView: View {
                         Button("取消(已完成的保留)", role: .destructive) {
                             pipeline.cancel()
                         }
-                    }
-                }
-
-                if model.modelManager.state == .downloading {
-                    Section("模型下载") {
-                        ProgressView(value: model.modelManager.progress)
-                        Button("暂停") { model.modelManager.pause() }
                     }
                 }
 

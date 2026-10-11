@@ -42,7 +42,7 @@ struct EvaluationView: View {
 
             Section("指标") {
                 Button(running ? "运行中…" : "运行评测") { Task { await runReport() } }
-                    .disabled(running || labels.items.allSatisfy { $0.relevant.isEmpty } || !model.canRunModel)
+                    .disabled(running || labels.items.allSatisfy { $0.relevant.isEmpty })
                 if let report {
                     LabeledContent("Recall@10", value: String(format: "%.3f", report.recallAt10))
                     LabeledContent("MRR", value: String(format: "%.3f", report.mrr))
@@ -66,7 +66,7 @@ struct EvaluationView: View {
 
             Section {
                 Button(running ? "检查中…" : "检查 GPU / CPU 向量一致性") { Task { await runConsistency() } }
-                    .disabled(running || model.photos.isEmpty || !model.canRunModel)
+                    .disabled(running || model.photos.isEmpty)
                 if let consistency, !consistency.isEmpty {
                     LabeledContent("样本", value: "\(consistency.count) 张")
                     LabeledContent("余弦相似度 最小 / 均值",

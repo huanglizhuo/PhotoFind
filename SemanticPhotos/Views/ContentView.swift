@@ -3,7 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var showImportFlow = false
-    @State private var showDownload = false
     @State private var showSettings = false
     @State private var showPrivacy = false
     @State private var showProgressDetail = false
@@ -22,8 +21,7 @@ struct ContentView: View {
     }
 
     private var showPill: Bool {
-        model.pipeline.hasWork || model.modelManager.state == .downloading
-            || model.modelManager.state == .verifying || model.modelManager.state == .paused
+        model.pipeline.hasWork
     }
 
     /// Photos the grid shows right now (results or the filtered library).
@@ -66,7 +64,7 @@ struct ContentView: View {
                         if !model.photos.isEmpty {
                             FilterBarView()
                         }
-                        SearchBarView(onDownloadRequest: { showDownload = true })
+                        SearchBarView()
                     }
                 }
                 .padding(.horizontal, 16)
@@ -82,7 +80,6 @@ struct ContentView: View {
             .toolbar { toolbar }
         }
         .sheet(isPresented: $showImportFlow) { ImportFlowView() }
-        .sheet(isPresented: $showDownload) { DownloadView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showPrivacy) { NavigationStack { PrivacyView() } }
         .sheet(isPresented: $showProgressDetail) { ProgressDetailView() }
@@ -102,15 +99,8 @@ struct ContentView: View {
                 DetailView(startID: detailPhotoID)
             }
         }
-        .onChange(of: model.modelManager.state) { _, _ in
-            model.modelStateChanged()
-        }
         .onChange(of: model.searchError) { _, error in
             if let error { show(error) }
-        }
-        .onAppear {
-            // F1.1: first launch goes straight to the model download page.
-            if !model.isModelReady { showDownload = true }
         }
     }
 
@@ -128,11 +118,10 @@ struct ContentView: View {
             }
         } else {
             ToolbarItemGroup(placement: .topBarLeading) {
-                // F7.1: importing is open while the model downloads; the queue waits for it.
+                // F7.1: the queue is always free to start; the model is bundled (F1.11).
                 Button { showImportFlow = true } label: {
                     Label("导入照片", systemImage: "plus")
                 }
-                .disabled(!model.modelEnabled)
                 if !shownIDs.isEmpty {
                     Button("选择") { self.selection = [] }
                 }
@@ -146,11 +135,6 @@ struct ContentView: View {
                         Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
                     }
                 }
-                Toggle(isOn: $model.modelEnabled) {
-                    Label("加载并运行模型", systemImage: "brain")
-                }
-                .toggleStyle(.button)
-                .disabled(!model.isModelReady)
                 // F0.8: the on-device promise, one tap away.
                 Button { showPrivacy = true } label: {
                     Label("仅本机处理", systemImage: "lock.shield")
