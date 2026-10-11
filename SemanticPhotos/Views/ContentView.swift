@@ -128,10 +128,6 @@ struct ContentView: View {
             }
         } else {
             ToolbarItemGroup(placement: .topBarLeading) {
-                NavigationLink { ConstellationView() } label: {
-                    Label("我的星团", systemImage: "sparkles")
-                }
-                .accessibilityIdentifier("openConstellation")
                 // F7.1: importing is open while the model downloads; the queue waits for it.
                 Button { showImportFlow = true } label: {
                     Label("导入照片", systemImage: "plus")

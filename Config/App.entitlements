@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- JavaScriptCore and the GPU model both reserve large virtual address ranges on device. -->
+	<!-- The GPU model reserves large virtual address ranges on device. (T1: JavaScriptCore is gone; T4 checks whether this entitlement is still needed.) -->
 	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 	<true/>
 	<key>com.apple.security.application-groups</key>

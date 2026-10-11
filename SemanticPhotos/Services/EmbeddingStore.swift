@@ -76,10 +76,11 @@ actor EmbeddingStore {
 
     /// v0.5 columns. ALTER keeps existing rows and vectors, so upgrading never
     /// re-embeds; the metadata is backfilled by the cold-start sweep.
+    // T1: the world_* (constellation) columns are gone from this list; databases
+    // upgraded before v0.7 keep the stale columns but they are never read again.
     private static let addedColumns = [
         ("taken_at", "REAL"), ("favorite", "INTEGER NOT NULL DEFAULT 0"), ("kinds", "INTEGER NOT NULL DEFAULT 0"),
         ("lat", "REAL"), ("lon", "REAL"), ("city_id", "INTEGER"), ("city_km", "REAL"), ("ocr_text", "TEXT"),
-        ("world_x", "REAL"), ("world_y", "REAL"), ("world_z", "REAL"), ("world_version", "TEXT"),
     ]
 
     private static func addMissingColumns(_ db: OpaquePointer?) {
@@ -110,8 +111,7 @@ actor EmbeddingStore {
             embedding = excluded.embedding, dim = excluded.dim, model_version = excluded.model_version,
             asset_mod_date = excluded.asset_mod_date, taken_at = excluded.taken_at,
             favorite = excluded.favorite, kinds = excluded.kinds, lat = excluded.lat, lon = excluded.lon,
-            city_id = excluded.city_id, city_km = excluded.city_km, ocr_text = NULL,
-            world_x = NULL, world_y = NULL, world_z = NULL, world_version = NULL;
+            city_id = excluded.city_id, city_km = excluded.city_km, ocr_text = NULL;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -174,53 +174,6 @@ actor EmbeddingStore {
     func clearAll() throws {
         guard sqlite3_exec(db, "DELETE FROM embeddings; DELETE FROM pending;", nil, nil, nil) == SQLITE_OK else {
             throw storeError()
-        }
-    }
-
-    // Coordinates live on the embedding row, so deletion and index reset also erase the world.
-    func constellationRows() throws -> [ConstellationRow] {
-        let stmt = try prepare("SELECT asset_id, embedding, world_x, world_y, world_z, world_version FROM embeddings ORDER BY asset_id;")
-        defer { sqlite3_finalize(stmt) }
-        var rows: [ConstellationRow] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let id = String(cString: sqlite3_column_text(stmt, 0))
-            let size = Int(sqlite3_column_bytes(stmt, 1))
-            guard size > 0, size.isMultiple(of: MemoryLayout<Float>.size),
-                  let bytes = sqlite3_column_blob(stmt, 1) else {
-                throw ConstellationProjection.ProjectionError.invalidVectors
-            }
-            let vector = Array(UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: Float.self),
-                                                  count: size / MemoryLayout<Float>.size))
-            let valid = sqlite3_column_text(stmt, 5).map { String(cString: $0) == ConstellationProjection.cacheVersion } ?? false
-            let position: SIMD3<Float>? = valid && (2...4).allSatisfy { sqlite3_column_type(stmt, Int32($0)) != SQLITE_NULL }
-                ? SIMD3(Float(sqlite3_column_double(stmt, 2)), Float(sqlite3_column_double(stmt, 3)), Float(sqlite3_column_double(stmt, 4))) : nil
-            rows.append(ConstellationRow(id: id, vector: vector, position: position))
-        }
-        return rows
-    }
-
-    func saveConstellation(_ nodes: [ConstellationNode], for rows: [ConstellationRow]) throws {
-        guard nodes.count >= 4 else { return }
-        let byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
-        let stmt = try prepare("""
-        UPDATE embeddings SET world_x = ?, world_y = ?, world_z = ?, world_version = ?
-        WHERE asset_id = ? AND embedding = ?;
-        """)
-        defer { sqlite3_finalize(stmt) }
-        try transaction {
-            for node in nodes {
-                guard let row = byID[node.id], row.position != node.position, node.position.x.isFinite,
-                      node.position.y.isFinite, node.position.z.isFinite else { continue }
-                sqlite3_reset(stmt)
-                sqlite3_bind_double(stmt, 1, Double(node.position.x))
-                sqlite3_bind_double(stmt, 2, Double(node.position.y))
-                sqlite3_bind_double(stmt, 3, Double(node.position.z))
-                bindText(ConstellationProjection.cacheVersion, at: 4, in: stmt)
-                bindText(node.id, at: 5, in: stmt)
-                // A photo may be removed or re-embedded while UMAP runs; never restore stale data.
-                _ = row.vector.withUnsafeBytes { sqlite3_bind_blob(stmt, 6, $0.baseAddress, Int32($0.count), SQLITE_TRANSIENT) }
-                guard sqlite3_step(stmt) == SQLITE_DONE else { throw storeError() }
-            }
         }
     }
 

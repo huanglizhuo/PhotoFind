@@ -52,26 +52,6 @@ final class SemanticPhotosUITests: XCTestCase {
 
     // MARK: - Grid (F3)
 
-    func testConstellationNavigationCameraAndFilters() throws {
-        try requireIndexedPhotos(4)
-        app.buttons["openConstellation"].tap()
-        XCTAssertTrue(app.navigationBars["我的星团"].waitForExistence(timeout: 10))
-        let world = app.descendants(matching: .any)["constellationScene"].firstMatch
-        XCTAssertTrue(world.waitForExistence(timeout: 15))
-        // A first fit on a physical device takes longer than the small Simulator fixture.
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label MATCHES '[1-9][0-9]* 颗记忆'")).firstMatch.waitForExistence(timeout: 180))
-        world.swipeLeft()
-        world.pinch(withScale: 1.5, velocity: 1)
-        app.buttons["回到全景"].tap()
-        app.buttons["收藏"].tap()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '位置保持不变'")).firstMatch.waitForExistence(timeout: 5))
-        app.buttons["清除"].tap()
-        app.buttons["星团操作"].tap()
-        app.buttons["照片列表"].tap()
-        XCTAssertTrue(grid.waitForExistence(timeout: 5))
-        XCTAssertEqual(app.state, .runningForeground)
-    }
-
     func testPinchChangesColumnsAndKeepsWorking() throws {
         try requireIndexedPhotos()
         let before = columns()
