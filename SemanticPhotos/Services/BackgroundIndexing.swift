@@ -1,6 +1,5 @@
 import BackgroundTasks
 import UIKit
-import UserNotifications
 
 /// Keeps indexing going outside the foreground (F2.8):
 /// - a run the user started continues as a `BGContinuedProcessingTask` (system
@@ -113,20 +112,5 @@ final class BackgroundIndexing {
         hasBackgroundGPU = false
         overnightTask?.setTaskCompleted(success: success)
         overnightTask = nil
-    }
-
-    // MARK: - Completion notice
-
-    /// Asked when the user starts a long run, not at launch.
-    func requestNotificationPermission() {
-        Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
-    }
-
-    func notifyFinished(searchableCount: Int) {
-        let content = UNMutableNotificationContent()
-        content.title = "照片索引完成"
-        content.body = "已可搜索 \(searchableCount) 张照片"
-        let request = UNNotificationRequest(identifier: "index-finished", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
     }
 }

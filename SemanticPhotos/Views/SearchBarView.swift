@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// Bottom floating glass search capsule (F0.1 / F4.1), with search guidance
-/// above it while it's focused and empty (F4.10) and the one-time first
-/// search tip (F7.3).
+/// above it while it's focused and empty (F4.10).
 struct SearchBarView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
@@ -12,9 +11,6 @@ struct SearchBarView: View {
         VStack(spacing: 10) {
             if focused, model.searchText.isEmpty {
                 SearchGuideView(onPick: pick)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.showFirstSearchTip, model.searchResults == nil {
-                FirstSearchTip(onPick: pick, onDismiss: model.dismissFirstSearchTip)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
@@ -88,33 +84,6 @@ private struct SearchGuideView: View {
         .padding(14)
         .contentShape(.rect(cornerRadius: 22))
         .onTapGesture {}  // keep taps in the panel off the UIKit grid
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-    }
-}
-
-/// F7.3: shown once, after the first photos become searchable.
-private struct FirstSearchTip: View {
-    let onPick: (String) -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("照片已经可以搜索了", systemImage: "sparkles")
-                    .font(.footnote.weight(.semibold))
-                Spacer()
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.footnote.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭提示")
-            }
-            ChipRow(items: AppModel.exampleQueries, systemImage: nil, onPick: onPick)
-        }
-        .padding(14)
-        .contentShape(.rect(cornerRadius: 22))
-        .onTapGesture {}
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
     }
 }

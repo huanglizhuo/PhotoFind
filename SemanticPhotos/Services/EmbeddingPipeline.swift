@@ -8,11 +8,6 @@ import UIKit
 @MainActor
 @Observable
 final class EmbeddingPipeline {
-    struct Failure: Identifiable, Equatable {
-        let id: String
-        let reason: String
-    }
-
     /// Why queued work isn't running, shown in the progress pill (F2.4).
     enum PauseReason: Hashable {
         case lowPower, thermal
@@ -33,7 +28,6 @@ final class EmbeddingPipeline {
     private(set) var textTotal = 0
     private(set) var textDone = 0
     private(set) var currentThumbnail: UIImage?
-    private(set) var failures: [Failure] = []
     /// Assets currently being embedded (grid badge, F3.4).
     private(set) var processingIDs: Set<String> = []
     private(set) var failedIDs: Set<String> = []
@@ -86,7 +80,6 @@ final class EmbeddingPipeline {
     private var embedQueued: Set<String> = []
     private var textQueue: [String] = []
     private var textQueued: Set<String> = []
-    private var cancelRequested = false
     private var runTask: Task<Void, Never>?
     private var embeddedThisRun = 0
     private var prefetch: Task<UIImage?, Never>?
@@ -104,7 +97,7 @@ final class EmbeddingPipeline {
     }
 
     var progressText: String {
-        phase == .embed ? "正在处理 \(embedDone)/\(embedTotal)" : "文字识别 \(textDone)/\(textTotal)"
+        phase == .embed ? "正在建立索引 \(embedDone)/\(embedTotal)" : "文字识别 \(textDone)/\(textTotal)"
     }
 
     init(store: EmbeddingStore, engine: EmbeddingEngine, photoServiceProvider: @escaping () -> PhotoLibraryService) {
@@ -117,6 +110,18 @@ final class EmbeddingPipeline {
     /// for photos indexed before text recognition existed.
     func restore(dimension: Int) async {
         self.dimension = dimension
+        // Test-only (T6): indexing no longer has a cancel (F2.5), so a UI test
+        // that starts a run passes this argument on a relaunch to drop the
+        // persisted queue, keeping later tests idle. Never set in normal use.
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.contains("uitestDropPendingQueue") }) {
+            embedQueue.removeAll()
+            embedQueued.removeAll()
+            textQueue.removeAll()
+            textQueued.removeAll()
+            resetCounters()
+            persist { try await $0.clearPending() }
+            return
+        }
         let embeds = (try? await store.pending(stage: .embed)) ?? []
         let texts = (try? await store.pending(stage: .recognizeText)) ?? []
         append(embeds, to: .embed)
@@ -140,30 +145,6 @@ final class EmbeddingPipeline {
         } else if pauseReasons.remove(reason) != nil {
             startIfNeeded()
         }
-    }
-
-    /// Stops after the current photo and drops all queued work (already
-    /// indexed photos stay).
-    func cancel() {
-        cancelRequested = true
-        prefetch?.cancel()
-        embedQueue.removeAll()
-        embedQueued.removeAll()
-        textQueue.removeAll()
-        textQueued.removeAll()
-        persist { try await $0.clearPending() }
-        if runTask == nil { resetCounters() }
-    }
-
-    func clearFailures() {
-        failures.removeAll()
-        failedIDs.removeAll()
-    }
-
-    func retryFailures() {
-        let ids = failures.map(\.id)
-        clearFailures()
-        enqueue(ids, excluding: [], dimension: dimension)
     }
 
     /// Photos deleted from the index leave the queue too.
@@ -209,7 +190,6 @@ final class EmbeddingPipeline {
 
     private func startIfNeeded() {
         guard runTask == nil, !isPaused, pendingCount > 0 else { return }
-        cancelRequested = false
         embeddedThisRun = 0
         isRunning = true
         runTask = Task { [weak self] in
@@ -217,7 +197,8 @@ final class EmbeddingPipeline {
         }
     }
 
-    private var shouldStop: Bool { cancelRequested || isPaused }
+    /// The queue only ever stops for system reasons (F2.5, T6): low power or heat.
+    private var shouldStop: Bool { isPaused }
 
     private func runLoop() async {
         while !shouldStop {
@@ -233,7 +214,6 @@ final class EmbeddingPipeline {
         prefetch = nil
         runTask = nil
         isRunning = false
-        cancelRequested = false
         if pendingCount == 0 {
             resetCounters()
         }
@@ -281,16 +261,14 @@ final class EmbeddingPipeline {
         await waitForStillUI()
         guard !shouldStop else {
             processingIDs.remove(id)
-            // Paused, not cancelled: run this photo again on resume.
-            if !cancelRequested {
-                embedQueue.insert(id, at: 0)
-                embedQueued.insert(id)
-            }
+            // Paused: run this photo again on resume.
+            embedQueue.insert(id, at: 0)
+            embedQueued.insert(id)
             return
         }
 
         guard let image else {
-            fail(id, PhotoLibraryService.EmbeddingImageError.imageUnavailable.localizedDescription)
+            fail(id)
             return
         }
         do {
@@ -314,7 +292,7 @@ final class EmbeddingPipeline {
             }
             reportProgress()
         } catch {
-            fail(id, error.localizedDescription)
+            fail(id)
         }
     }
 
@@ -324,10 +302,9 @@ final class EmbeddingPipeline {
         textQueued.remove(id)
         await waitForStillUI()
         guard !shouldStop else {
-            if !cancelRequested {
-                textQueue.insert(id, at: 0)
-                textQueued.insert(id)
-            }
+            // Paused: run this photo again on resume.
+            textQueue.insert(id, at: 0)
+            textQueued.insert(id)
             return
         }
         var text = ""
@@ -341,10 +318,11 @@ final class EmbeddingPipeline {
         reportProgress()
     }
 
-    private func fail(_ id: String, _ reason: String) {
+    /// A single photo failing doesn't block the queue (F2.6, T6): it counts as
+    /// done, gets the grid's failed badge and is retried on a later launch.
+    private func fail(_ id: String) {
         processingIDs.remove(id)
         embedDone += 1
-        failures.append(Failure(id: id, reason: reason))
         failedIDs.insert(id)
         persist { try await $0.removePending(id, stage: .embed) }
         reportProgress()

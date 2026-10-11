@@ -4,8 +4,6 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var showImportFlow = false
     @State private var showSettings = false
-    @State private var showPrivacy = false
-    @State private var showProgressDetail = false
     @State private var detailPhotoID: String?
     /// Multi-select mode (F4.11); nil when off.
     @State private var selection: Set<String>?
@@ -58,7 +56,7 @@ struct ContentView: View {
                             }
                         }
                         if showPill {
-                            ProgressPill { showProgressDetail = true }
+                            ProgressPill()
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                         if !model.photos.isEmpty {
@@ -81,8 +79,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showImportFlow) { ImportFlowView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .sheet(isPresented: $showPrivacy) { NavigationStack { PrivacyView() } }
-        .sheet(isPresented: $showProgressDetail) { ProgressDetailView() }
         .sheet(item: $shareItems) { ShareSheet(items: $0.images) }
         .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
             TextField("相簿名称", text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
@@ -134,10 +130,6 @@ struct ContentView: View {
                     } label: {
                         Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
                     }
-                }
-                // F0.8: the on-device promise, one tap away.
-                Button { showPrivacy = true } label: {
-                    Label("仅本机处理", systemImage: "lock.shield")
                 }
                 Button { showSettings = true } label: {
                     Label("设置", systemImage: "gearshape")

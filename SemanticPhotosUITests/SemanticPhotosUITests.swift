@@ -231,10 +231,11 @@ final class SemanticPhotosUITests: XCTestCase {
             throw XCTSkip("需要至少 60 张未索引的照片")
         }
         indexAll.tap()
-        let pill = app.buttons.matching(NSPredicate(format: "label CONTAINS '正在处理'")).firstMatch
+        // T6 (F0.2): display-only capsule, "正在建立索引 已完成/总数 · 预计剩余".
+        let pill = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '正在建立索引'")).firstMatch
         func done() -> Int {
             guard pill.exists else { return -1 }
-            return Int(pill.label.components(separatedBy: "正在处理 ").last?.components(separatedBy: "/").first ?? "") ?? -1
+            return Int(pill.label.components(separatedBy: "正在建立索引 ").last?.components(separatedBy: "/").first ?? "") ?? -1
         }
         sleep(3)
         // Compare rates rather than counts: reading the pill takes time too.
@@ -250,7 +251,11 @@ final class SemanticPhotosUITests: XCTestCase {
         print("embedding rate while dragging \(dragRate)/s, idle \(idleRate)/s (\(d0)→\(d1)→\(d2))")
         XCTAssertGreaterThan(idleRate, 0, "静止时应在推理")
         XCTAssertLessThan(dragRate, idleRate * 0.35, "拖动期间推理应基本暂停")
-        pill.tap()
-        if app.buttons["取消(已完成的保留)"].waitForExistence(timeout: 5) { app.buttons["取消(已完成的保留)"].tap() }
+        // T6 (F2.5): indexing can't be cancelled anymore. Relaunch with the
+        // test-only launch argument so the persisted queue is dropped and no
+        // indexing work leaks into the tests that follow.
+        app.terminate()
+        app.launchArguments.append("uitestDropPendingQueue")
+        app.launch()
     }
 }

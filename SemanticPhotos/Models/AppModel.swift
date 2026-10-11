@@ -98,8 +98,6 @@ final class AppModel {
     var debugToolsEnabled: Bool {
         didSet { UserDefaults.standard.set(debugToolsEnabled, forKey: "debugToolsEnabled") }
     }
-    /// F7.3: one-time tip after the first photos become searchable.
-    private(set) var showFirstSearchTip = false
 
     private var memoryWarningObserver: NSObjectProtocol?
     private var powerObservers: [NSObjectProtocol] = []
@@ -120,7 +118,7 @@ final class AppModel {
         created.textRecognitionEnabled = textRecognitionEnabled
         created.onPhotoIndexed = { [weak self] photo in self?.photoIndexed(photo) }
         created.onProgress = { [weak self] done, total in self?.background.update(done: done, total: total) }
-        created.onFinished = { [weak self] embedded in self?.pipelineFinished(embedded: embedded) }
+        created.onFinished = { [weak self] _ in self?.pipelineFinished() }
         _pipeline = created
         return created
     }
@@ -281,16 +279,10 @@ final class AppModel {
         lastModelUse = Date()
     }
 
-    private func pipelineFinished(embedded: Int) {
+    private func pipelineFinished() {
         lastModelUse = Date()
         guard pipeline.pendingCount == 0 else { return }
-        if embedded > 0, !isInForeground {
-            background.notifyFinished(searchableCount: photos.count)
-        }
         background.finish(success: true)
-        if embedded > 0, !photos.isEmpty, !UserDefaults.standard.bool(forKey: "didSearchOnce") {
-            showFirstSearchTip = true
-        }
     }
 
     // MARK: - Import (F2)
@@ -319,7 +311,6 @@ final class AppModel {
     }
 
     func indexAllPhotos() {
-        background.requestNotificationPermission()
         importAssets(unindexedPhotoIDs())
     }
 
@@ -416,8 +407,6 @@ final class AppModel {
         isSearching = true
         searchError = nil
         searchTitle = nil
-        UserDefaults.standard.set(true, forKey: "didSearchOnce")
-        showFirstSearchTip = false
         let allowed = filter.isActive ? Set(visiblePhotos.map(\.id)) : nil
         searchTask = Task { [weak self] in
             guard let self else { return }
@@ -513,11 +502,6 @@ final class AppModel {
     func clearRecentSearches() {
         recentSearches = []
         UserDefaults.standard.removeObject(forKey: "recentSearches")
-    }
-
-    func dismissFirstSearchTip() {
-        showFirstSearchTip = false
-        UserDefaults.standard.set(true, forKey: "didSearchOnce")
     }
 
     // MARK: - Shared image inbox (F6.3)
