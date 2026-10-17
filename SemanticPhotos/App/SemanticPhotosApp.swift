@@ -12,6 +12,7 @@ struct SemanticPhotosApp: App {
             ContentView()
                 .environment(model)
                 .task { model.onLaunch() }
+                .onOpenURL { model.handleOpenURL($0) }
         }
         .onChange(of: scenePhase) { _, phase in
             model.scenePhaseChanged(phase)

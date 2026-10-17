@@ -38,4 +38,37 @@ enum SearchEngine {
         try Task.checkCancellation()
         return result
     }
+
+    /// Pure relevance-band rules (v0.8, extracted from AppModel so they can be
+    /// unit-tested): the divider and the "no convincing match" state.
+    enum Relevance {
+        /// Highest score that isn't a text match or the similar-photo seed.
+        static func bestScore(_ scores: [Float], excluding: Set<Int>) -> Float? {
+            for (index, score) in scores.enumerated() where !excluding.contains(index) {
+                return score
+            }
+            return nil
+        }
+
+        /// F4.3: results below max(best − gap, floor) are the low-relevance tail.
+        static func cutoff(best: Float, gap: Float, floor: Float) -> Float {
+            max(best - gap, floor)
+        }
+
+        /// First displayed result that belongs below the divider.
+        static func firstIndexBelow(_ scores: [Float], cutoff: Float, excluding: Set<Int>) -> Int? {
+            for (index, score) in scores.enumerated()
+            where !excluding.contains(index) && score < cutoff {
+                return index
+            }
+            return nil
+        }
+
+        /// Nothing plausible matched at all — show the empty state instead of
+        /// a wall of unrelated photos.
+        static func isLowConfidence(best: Float?, floor: Float) -> Bool {
+            guard let best else { return false }
+            return best < floor
+        }
+    }
 }

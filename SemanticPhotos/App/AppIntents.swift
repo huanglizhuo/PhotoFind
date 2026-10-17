@@ -5,7 +5,7 @@ import AppIntents
 /// "索引新照片" intent is gone in v0.7 (T11) — indexing is automatic.
 struct SearchPhotosIntent: AppIntent {
     static let title: LocalizedStringResource = "搜索照片"
-    static let description = IntentDescription("用一句话描述,在 SemanticPhotos 里找到对应的照片。")
+    static let description = IntentDescription("用一句话描述，在一句找图里找到对应的照片。")
     static let supportedModes: IntentModes = .foreground
 
     @Parameter(title: "描述", requestValueDialog: "要找什么样的照片?")

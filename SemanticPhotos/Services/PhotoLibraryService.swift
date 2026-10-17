@@ -24,6 +24,11 @@ final class PhotoLibraryService: NSObject {
     /// progress handler runs on a PhotoKit background queue, so the counters
     /// are lock-protected rather than main-actor state.
     private let iCloudFetches = ICloudFetchCounters()
+
+    /// v0.8 / G3: indexing is local-first. Only after the user explicitly taps
+    /// "下载并索引" does PhotoKit request iCloud originals; sharing and the
+    /// detail view are unaffected and always allowed to download.
+    var allowNetworkForEmbedding = false
     var iCloudFetchCounts: (needed: Int, total: Int) { iCloudFetches.snapshot }
 
     /// Members of the system "Selfies" album; rebuilt after library changes.
@@ -138,17 +143,6 @@ final class PhotoLibraryService: NSObject {
 
     // MARK: - Images
 
-    enum EmbeddingImageError: LocalizedError {
-        case assetNotFound
-        case imageUnavailable
-        var errorDescription: String? {
-            switch self {
-            case .assetNotFound: return "照片不存在或不在已授权范围内"
-            case .imageUnavailable: return "无法读取照片(可能未从 iCloud 下载)"
-            }
-        }
-    }
-
     func fullImage(for id: String, targetSize: CGSize) async -> UIImage? {
         guard let asset = asset(for: id) else { return nil }
         let scale = UITraitCollection.current.displayScale
@@ -162,13 +156,18 @@ final class PhotoLibraryService: NSObject {
 
     /// Embedding input: 512px long edge (§2.1). Counted for F8.3: the options'
     /// progress handler fires only when PhotoKit actually downloads from iCloud.
+    /// v0.8: local-first. An iCloud-only photo throws `.icloudOnly` instead of
+    /// silently downloading hundreds of MB, and the UI offers an explicit
+    /// "下载并索引" action.
     func embeddingImage(for id: String) async throws -> UIImage {
         guard let asset = asset(for: id) else { throw EmbeddingImageError.assetNotFound }
         let counters = iCloudFetches
         counters.recordRequested()
         guard let image = await scaledImage(asset, longEdge: 512,
+                                            allowNetwork: allowNetworkForEmbedding,
                                             onCloudDownload: { counters.recordCloudDownload() }) else {
-            throw EmbeddingImageError.imageUnavailable
+            throw allowNetworkForEmbedding ? EmbeddingImageError.imageUnavailable
+                                           : EmbeddingImageError.icloudOnly
         }
         return image
     }
@@ -176,7 +175,7 @@ final class PhotoLibraryService: NSObject {
     /// Text recognition input: small text needs more pixels than the embedder (F4.12).
     func textImage(for id: String) async -> UIImage? {
         guard let asset = asset(for: id) else { return nil }
-        return await scaledImage(asset, longEdge: 1536)
+        return await scaledImage(asset, longEdge: 1536, allowNetwork: allowNetworkForEmbedding)
     }
 
     /// Original photo files for the share sheet (F3.5.4 / F4.11, T13): fetched
@@ -294,13 +293,14 @@ final class PhotoLibraryService: NSObject {
         return nil
     }
 
-    private func scaledImage(_ asset: PHAsset, longEdge: CGFloat,
+    private func scaledImage(_ asset: PHAsset, longEdge: CGFloat, allowNetwork: Bool = true,
                              onCloudDownload: (@Sendable () -> Void)? = nil) async -> UIImage? {
         let w = CGFloat(asset.pixelWidth), h = CGFloat(asset.pixelHeight)
         let ratio = w > 0 && h > 0 ? min(longEdge / w, longEdge / h, 1) : 1
         let target = CGSize(width: max(1, (w * ratio).rounded()), height: max(1, (h * ratio).rounded()))
         return await requestImage(asset: asset, targetSize: target, deliveryMode: .highQualityFormat,
-                                  allowNetwork: true, contentMode: .aspectFit, onCloudDownload: onCloudDownload)
+                                  allowNetwork: allowNetwork, contentMode: .aspectFit,
+                                  onCloudDownload: onCloudDownload)
     }
 
     // MARK: - Albums
@@ -377,6 +377,23 @@ final class ICloudFetchCounters: @unchecked Sendable {
     var snapshot: (needed: Int, total: Int) {
         lock.lock(); defer { lock.unlock() }
         return (needed, total)
+    }
+}
+
+/// Embedding-image failures, top-level so the pipeline can carry them across
+/// actor hops under Swift 6.
+enum EmbeddingImageError: LocalizedError, Sendable {
+    case assetNotFound
+    case imageUnavailable
+    /// v0.8 / G3: local-first indexing found an iCloud-only asset. The app
+    /// defers it and lets the user opt into downloading.
+    case icloudOnly
+    var errorDescription: String? {
+        switch self {
+        case .assetNotFound: return "照片不存在或不在已授权范围内"
+        case .imageUnavailable: return "无法读取照片(可能未从 iCloud 下载)"
+        case .icloudOnly: return "照片在 iCloud，尚未下载"
+        }
     }
 }
 

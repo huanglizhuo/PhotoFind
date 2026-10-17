@@ -19,7 +19,10 @@ struct PhotoGridView: View {
 
     var body: some View {
         let results = model.searchResults
-        let photos = results?.map(\.photo) ?? model.photos
+        // v0.8: when nothing passes the relevance floor, don't show a wall of
+        // unrelated photos; the empty state offers the low-relevance tail.
+        let showLowConfidence = results != nil && model.isLowConfidence && !model.showLowRelevance
+        let photos = showLowConfidence ? [] : (results?.map(\.photo) ?? model.photos)
         ZStack(alignment: .top) {
             PhotoCollection(
                 model: model,
@@ -27,6 +30,7 @@ struct PhotoGridView: View {
                     ids: photos.map(\.id),
                     scores: model.showScores ? Dictionary(uniqueKeysWithValues: (results ?? []).map { ($0.id, $0.score) }) : [:],
                     textMatches: Set((results ?? []).filter(\.textMatch).map(\.id)),
+                    originals: Set((results ?? []).filter(\.isOriginal).map(\.id)),
                     processing: model.pipeline.processingIDs,
                     failed: model.pipeline.failedIDs,
                     isSearch: results != nil,
@@ -69,8 +73,62 @@ struct PhotoGridView: View {
             }
         }
         .overlay {
-            if photos.isEmpty { emptyState }
+            if showLowConfidence {
+                lowConfidenceState
+            } else if photos.isEmpty {
+                emptyState
+            }
         }
+    }
+
+    /// v0.8: no convincing match. Show the reason and the two useful actions
+    /// instead of 60 unrelated photos under a divider.
+    private var lowConfidenceState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("没有找到足够相关的照片")
+                .font(.headline)
+            Text(detailText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            VStack(spacing: 10) {
+                if model.cloudOnlyCount > 0 {
+                    Button {
+                        model.downloadCloudPhotos()
+                    } label: {
+                        Text("下载 \(model.cloudOnlyCount) 张 iCloud 照片")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Button {
+                    model.showLowRelevanceResults()
+                } label: {
+                    Text("查看 \(model.totalResultCount) 张低相关结果")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Button("清除搜索") { model.clearSearch() }
+                    .buttonStyle(.bordered)
+            }
+            .padding(.top, 4)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+
+    private var detailText: String {
+        if model.cloudOnlyCount > 0 {
+            return "还有 \(model.cloudOnlyCount) 张照片在 iCloud，尚未索引；下载后可能找到。"
+        }
+        if model.unindexedCount > 0 {
+            return "还有 \(model.unindexedCount) 张照片没有索引完，完成后可能找到。"
+        }
+        return "换一种更具体的描述试试，比如“海边日落”“穿红衣服的人”。"
     }
 
     @ViewBuilder
@@ -88,7 +146,16 @@ struct PhotoGridView: View {
                     Text("没有找到匹配的照片")
                         .foregroundStyle(.secondary)
                 }
-            } else if model.pipeline.hasWork || model.photoService.allPhotos().count > 0 {
+            } else if model.photoService.authorization == .limited && model.libraryPhotoCount == 0 {
+                // v0.8: Limited with an empty selection is not "no photos".
+                Image(systemName: "photo.badge.plus")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("还没有选择照片")
+                    .foregroundStyle(.secondary)
+                Button("选择照片") { model.photoService.presentLimitedLibraryPicker() }
+                    .buttonStyle(.borderedProminent)
+            } else if model.pipeline.hasWork || model.libraryPhotoCount > 0 {
                 // F3.6 (T11): indexing with an empty grid (Full and Limited
                 // access is decided before the grid can appear, F2.1); a
                 // non-empty library with nothing indexed is on its way into
@@ -111,6 +178,8 @@ struct GridState {
     var ids: [String]
     var scores: [String: Float]
     var textMatches: Set<String>
+    /// v0.8: near-duplicates of a shared image, badged 原图.
+    var originals: Set<String>
     var processing: Set<String>
     var failed: Set<String>
     var isSearch: Bool
@@ -145,7 +214,8 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
     var onScrolling: (Bool) -> Void = { _ in }
 
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
-    private var state = GridState(ids: [], scores: [:], textMatches: [], processing: [], failed: [],
+    private var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
+                                  processing: [], failed: [],
                                   isSearch: false, lowRelevanceStart: nil, selection: nil, dates: [:])
     private var assets: [String: PHAsset] = [:]
     /// F4.4: where the grid was before a search, restored when it is cleared.
@@ -239,9 +309,11 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
             return
         }
         let processing = state.processing.contains(id), failed = state.failed.contains(id)
+        let badge: String? = state.originals.contains(id) ? "原图"
+            : state.textMatches.contains(id) ? "文字" : nil
         cell.setOverlay(tint: processing || failed ? Self.dim : nil, spinning: processing,
                         icon: failed && !processing ? Self.retryIcon : nil, score: state.scores[id],
-                        badge: state.textMatches.contains(id) ? "文字" : nil)
+                        badge: badge)
     }
 
     // MARK: - Month label (F3.7)

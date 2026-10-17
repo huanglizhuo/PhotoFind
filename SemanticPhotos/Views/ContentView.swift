@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
-    @State private var showSettings = false
+    @State private var showAbout = false
     @State private var detailPhotoID: String?
     /// Multi-select mode (F4.11); nil when off.
     @State private var selection: Set<String>?
@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var preparingShare = false
     @State private var albumPrompt: AlbumPrompt?
     @State private var toast: String?
+    @State private var showCloudPrompt = false
 
     private struct AlbumPrompt: Identifiable {
         let id = UUID()
@@ -56,18 +57,31 @@ struct ContentView: View {
                     if let selection {
                         selectionBar(selection)
                     } else {
-                        // F2.1 (T11): permanent row under Limited access.
-                        if model.photoService.authorization == .limited {
-                            limitedRow
-                        }
-                        if model.needsRebuild {
-                            banner("模型配置已变更,需要重建索引", actionTitle: "重建") {
-                                model.rebuildIndex()
+                        if let results = model.searchResults, !results.isEmpty {
+                            // Search mode: one compact summary line replaces the
+                            // indexing chrome, so the bottom stays calm.
+                            if !model.isLowConfidence || model.showLowRelevance {
+                                SearchSummaryBar(
+                                    found: model.totalResultCount,
+                                    shown: results.count,
+                                    indexed: model.photos.count,
+                                    total: model.libraryPhotoCount,
+                                    hasMore: model.hasMoreResults,
+                                    lowRelevance: model.isLowConfidence,
+                                    loadMore: model.loadMoreResults)
                             }
-                        }
-                        if showPill {
-                            ProgressPill()
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else {
+                            // F2.1 (T11): permanent row under Limited access.
+                            if model.photoService.authorization == .limited {
+                                limitedRow
+                            }
+                            if model.cloudOnlyCount > 0 {
+                                cloudRow
+                            }
+                            if showPill {
+                                ProgressPill()
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
                         }
                         SearchBarView()
                     }
@@ -75,7 +89,6 @@ struct ContentView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
                 .animation(.easeOut(duration: 0.3), value: showPill)
-                .animation(.easeOut(duration: 0.3), value: model.needsRebuild)
                 .animation(.easeOut(duration: 0.3), value: toast)
                 .animation(.easeOut(duration: 0.25), value: selection == nil)
             }
@@ -83,8 +96,17 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
         }
-        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showAbout) { NavigationStack { AboutView() } }
         .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
+        .alert("从 iCloud 下载并索引？", isPresented: $showCloudPrompt) {
+            Button("下载并索引") {
+                model.downloadCloudPhotos()
+                show("已开始下载并索引，进度见上方")
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("\(model.cloudOnlyCount) 张照片只存在 iCloud。下载可能消耗流量和时间；完成后即可搜索。分享原图不受影响。")
+        }
         .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
             TextField("相簿名称", text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
             Button("存储") { saveAlbum() }
@@ -124,8 +146,8 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { showSettings = true } label: {
-                    Label("设置", systemImage: "gearshape")
+                Button { showAbout = true } label: {
+                    Label("关于", systemImage: "info.circle")
                 }
             }
         }
@@ -197,7 +219,7 @@ struct ContentView: View {
             model.photoService.presentLimitedLibraryPicker()
         } label: {
             HStack {
-                Text("仅部分照片可搜 · 管理")
+                Text(model.libraryPhotoCount == 0 ? "还没有选择照片 · 选择照片" : "仅部分照片可搜 · 管理")
                     .font(.footnote)
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -212,20 +234,67 @@ struct ContentView: View {
         .glassEffect(.regular.interactive(), in: .capsule)
     }
 
-    private func banner(_ title: String, actionTitle: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    /// v0.8 / G3: photos that local-first indexing skipped because they only
+    /// exist in iCloud. Explicit user consent before any download.
+    private var cloudRow: some View {
+        Button {
+            showCloudPrompt = true
+        } label: {
             HStack(spacing: 8) {
-                Text(title)
-                    .font(.subheadline)
+                Image(systemName: "icloud.and.arrow.down")
+                    .font(.footnote)
+                Text("\(model.cloudOnlyCount) 张照片在 iCloud · 下载并索引")
+                    .font(.footnote)
                 Spacer()
-                Text(actionTitle)
-                    .font(.subheadline.weight(.semibold))
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
+            .foregroundStyle(.primary)
+            .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .contentShape(.capsule)  // whole capsule is the button, so no tap reaches the UIKit grid
         .glassEffect(.regular.interactive(), in: .capsule)
+    }
+}
+
+/// One compact line above the search bar while results are showing: result
+/// count, coverage and the "显示更多" action (v0.8).
+private struct SearchSummaryBar: View {
+    let found: Int
+    let shown: Int
+    let indexed: Int
+    let total: Int
+    let hasMore: Bool
+    let lowRelevance: Bool
+    let loadMore: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(summary)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if hasMore {
+                Button("显示更多", action: loadMore)
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .contentShape(.capsule)
+        .onTapGesture {}  // taps in the gaps must not reach the UIKit grid
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    private var summary: String {
+        var parts: [String] = []
+        if lowRelevance { parts.append("低相关") }
+        parts.append("找到 \(found) 张")
+        if shown < found { parts.append("已显示 \(shown) 张") }
+        if total > 0 { parts.append("已搜索 \(indexed)/\(total) 张") }
+        return parts.joined(separator: " · ")
     }
 }

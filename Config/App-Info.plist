@@ -9,7 +9,22 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).overnight-index</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).index.*</string>
+		<!-- v0.8: fixed identifier instead of a runtime UUID + wildcard, which
+		     BGTaskScheduler does not reliably match. -->
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).index</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>semanticphotos</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

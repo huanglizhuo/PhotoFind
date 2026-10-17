@@ -31,6 +31,10 @@ final class EmbeddingPipeline {
     /// Assets currently being embedded (grid badge, F3.4).
     private(set) var processingIDs: Set<String> = []
     private(set) var failedIDs: Set<String> = []
+    /// v0.8 / G3: photos that could not be embedded because they live only in
+    /// iCloud and indexing is local-first. Not failures — the UI offers a
+    /// one-tap "下载并索引" action.
+    private(set) var cloudOnlyIDs: Set<String> = []
     private(set) var pauseReasons: Set<PauseReason> = []
     /// Seconds per embedded photo in this session, for ETA (F2.4) and evaluation (F8.1).
     private(set) var embedDurations: [Double] = []
@@ -42,24 +46,16 @@ final class EmbeddingPipeline {
     var onFinished: ((Int) -> Void)?
 
     var isPaused: Bool { !pauseReasons.isEmpty }
-    var pendingCount: Int { embedQueue.count + (textRecognitionEnabled ? textQueue.count : 0) }
+    var pendingCount: Int { embedQueue.count + textQueue.count }
     var hasWork: Bool { isRunning || pendingCount > 0 }
 
-    /// Second pass on/off (F4.12, default on). Turning it off drops queued
-    /// text work; turning it back on queues every photo still missing text.
-    var textRecognitionEnabled = true {
-        didSet {
-            guard textRecognitionEnabled != oldValue else { return }
-            if textRecognitionEnabled {
-                Task { await queueMissingText() }
-            } else {
-                textQueue.removeAll()
-                textQueued.removeAll()
-                textTotal = 0
-                textDone = 0
-                persist { try await $0.clearPending(stage: .recognizeText) }
-            }
-        }
+    /// F4.12 (v0.8 / G2 default): only screenshots run the text pass. The
+    /// system Photos app already searches text in photos, and a full-library
+    /// OCR pass is the single most expensive part of indexing. Flip the policy
+    /// in `TextRecognitionPolicy` after T5 — the pipeline and store support
+    /// both modes.
+    private func shouldRecognizeText(_ meta: PhotoMeta) -> Bool {
+        !TextRecognitionPolicy.screenshotsOnly || meta.kinds.contains(.screenshot)
     }
 
     /// GPU inference competes with rendering and drops frames, so the grids call
@@ -82,7 +78,7 @@ final class EmbeddingPipeline {
     private var textQueued: Set<String> = []
     private var runTask: Task<Void, Never>?
     private var embeddedThisRun = 0
-    private var prefetch: Task<UIImage?, Never>?
+    private var prefetch: Task<Result<UIImage, EmbeddingImageError>, Never>?
     private var prefetchID: String?
     /// Queue writes run one after another, so "add" can't land after "remove".
     @ObservationIgnored private var storeWrites: Task<Void, Never>?
@@ -123,10 +119,12 @@ final class EmbeddingPipeline {
             return
         }
         let embeds = (try? await store.pending(stage: .embed)) ?? []
-        let texts = (try? await store.pending(stage: .recognizeText)) ?? []
         append(embeds, to: .embed)
-        append(texts, to: .recognizeText)
-        if textRecognitionEnabled { await queueMissingText() }
+        // Text work is re-derived from the database instead of resumed: this
+        // clears queues left by the old all-photo OCR pass and keeps only the
+        // current policy's screenshots (v0.8 / G2).
+        persist { try await $0.clearPending(stage: .recognizeText) }
+        await queueMissingText()
         startIfNeeded()
     }
 
@@ -134,9 +132,17 @@ final class EmbeddingPipeline {
         self.dimension = dimension
         let fresh = ids.filter { !indexed.contains($0) && !embedQueued.contains($0) && !processingIDs.contains($0) }
         guard !fresh.isEmpty else { return }
+        cloudOnlyIDs.subtract(fresh)
         append(fresh, to: .embed)
         persist { try await $0.addPending(fresh, stage: .embed) }
         startIfNeeded()
+    }
+
+    /// v0.8 / G3: the user consented to downloading iCloud originals. Drop the
+    /// deferred set and let `indexUnindexed` queue everything again with the
+    /// network flag enabled on the photo service.
+    func clearCloudOnly() {
+        cloudOnlyIDs.removeAll()
     }
 
     func setPaused(_ reason: PauseReason, _ paused: Bool) {
@@ -153,6 +159,7 @@ final class EmbeddingPipeline {
         embedQueued.subtract(ids)
         textQueue.removeAll { ids.contains($0) }
         textQueued.subtract(ids)
+        cloudOnlyIDs.subtract(ids)
     }
 
     // MARK: - Run loop
@@ -171,9 +178,10 @@ final class EmbeddingPipeline {
     }
 
     private func queueMissingText() async {
-        let missing = (try? await store.idsMissingText()) ?? []
+        let missing = (try? await store.idsMissingText(
+            screenshotsOnly: TextRecognitionPolicy.screenshotsOnly)) ?? []
         let fresh = missing.filter { !embedQueued.contains($0) && !textQueued.contains($0) }
-        guard !fresh.isEmpty, textRecognitionEnabled else { return }
+        guard !fresh.isEmpty else { return }
         append(fresh, to: .recognizeText)
         persist { try await $0.addPending(fresh, stage: .recognizeText) }
         startIfNeeded()
@@ -204,7 +212,7 @@ final class EmbeddingPipeline {
         while !shouldStop {
             if !embedQueue.isEmpty {
                 await embedNext()
-            } else if textRecognitionEnabled, !textQueue.isEmpty {
+            } else if !textQueue.isEmpty {
                 await recognizeNext()
             } else {
                 break
@@ -241,12 +249,12 @@ final class EmbeddingPipeline {
         embedQueued.remove(id)
         processingIDs.insert(id)
 
-        let image: UIImage?
+        let result: Result<UIImage, EmbeddingImageError>
         if let prefetch, prefetchID == id {
-            image = await prefetch.value
+            result = await prefetch.value
         } else {
             prefetch?.cancel()
-            image = try? await photoService.embeddingImage(for: id)
+            result = await Self.loadEmbeddingImage(service: photoService, id: id)
         }
         prefetch = nil
         prefetchID = nil
@@ -255,7 +263,7 @@ final class EmbeddingPipeline {
         if let nextID = embedQueue.first, !shouldStop {
             prefetchID = nextID
             let service = photoService
-            prefetch = Task { try? await service.embeddingImage(for: nextID) }
+            prefetch = Task { await Self.loadEmbeddingImage(service: service, id: nextID) }
         }
 
         await waitForStillUI()
@@ -267,7 +275,16 @@ final class EmbeddingPipeline {
             return
         }
 
-        guard let image else {
+        let image: UIImage
+        switch result {
+        case .success(let loaded):
+            image = loaded
+        case .failure(.icloudOnly):
+            // v0.8 / G3: local-first. Defer instead of failing; the UI offers
+            // an explicit download action.
+            deferCloud(id)
+            return
+        case .failure:
             fail(id)
             return
         }
@@ -278,15 +295,20 @@ final class EmbeddingPipeline {
             embedDurations.append(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
             let info = photoService.indexInfo(for: id)
             let meta = info?.meta ?? PhotoMeta()
+            // v0.8: hash the same 512px decode used for embedding, so "find the
+            // original" costs no extra image request.
+            let perceptualHash = PerceptualHash.dHash(image)
             try await store.insert(id: id, vector: vector, modelVersion: modelVersion,
-                                   modificationDate: info?.modificationDate, meta: meta)
+                                   modificationDate: info?.modificationDate, meta: meta,
+                                   perceptualHash: perceptualHash)
             persist { try await $0.removePending(id, stage: .embed) }
             processingIDs.remove(id)
+            cloudOnlyIDs.remove(id)
             embedDone += 1
             embeddedThisRun += 1
             currentThumbnail = image
             onPhotoIndexed?(IndexedPhoto(id: id, modificationDate: info?.modificationDate, importedAt: Date(), meta: meta))
-            if textRecognitionEnabled {
+            if shouldRecognizeText(meta) {
                 append([id], to: .recognizeText)
                 persist { try await $0.addPending([id], stage: .recognizeText) }
             }
@@ -315,6 +337,28 @@ final class EmbeddingPipeline {
         try? await store.setText(text, for: id)
         persist { try await $0.removePending(id, stage: .recognizeText) }
         textDone += 1
+        reportProgress()
+    }
+
+    @MainActor
+    private static func loadEmbeddingImage(service: PhotoLibraryService,
+                                           id: String) async -> Result<UIImage, EmbeddingImageError> {
+        do {
+            return .success(try await service.embeddingImage(for: id))
+        } catch let error as EmbeddingImageError {
+            return .failure(error)
+        } catch {
+            return .failure(.imageUnavailable)
+        }
+    }
+
+    /// v0.8 / G3: an iCloud-only photo is deferred, not failed. It leaves the
+    /// queue (so the run can finish) and is offered for download in the UI.
+    private func deferCloud(_ id: String) {
+        processingIDs.remove(id)
+        cloudOnlyIDs.insert(id)
+        embedDone += 1
+        persist { try await $0.removePending(id, stage: .embed) }
         reportProgress()
     }
 

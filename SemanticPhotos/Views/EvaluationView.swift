@@ -341,7 +341,7 @@ struct EvaluationLabels {
             let report: EvaluationReport?
             let gpuCPUCosine: [Float]?
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("SemanticPhotos-评测.json")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("一句找图-评测.json")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

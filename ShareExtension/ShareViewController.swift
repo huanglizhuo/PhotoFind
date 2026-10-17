@@ -1,17 +1,24 @@
+import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
 /// Share extension (F6.3): hands one image to the app through the App Group.
-/// The model is far too large for an extension's memory limit and extensions
-/// can't open their containing app, so the app embeds the image and shows
-/// similar photos the next time it becomes active.
+/// The model is far too large for an extension's memory limit, so the app
+/// embeds the image and shows similar photos.
+///
+/// v0.8: the image is downsampled to 2048px before it reaches the App Group
+/// (a 48MP original would otherwise be decoded in the app and could exhaust a
+/// 4GB device), and a best-effort "打开" button saves the manual app switch.
 final class ShareViewController: UIViewController {
     /// Keep in sync with `SharedImageInbox` in the app.
     private static let appGroup = "group.com.clothpath.mondigital"
     private static let fileName = "shared-image"
+    /// Duplicated from `AppInfo` (separate target).
+    private static let appName = "一句找图"
 
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
+    private let openButton = UIButton(configuration: .bordered())
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -25,12 +32,17 @@ final class ShareViewController: UIViewController {
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
         detailLabel.textAlignment = .center
-        var config = UIButton.Configuration.borderedProminent()
-        config.title = "完成"
-        let done = UIButton(configuration: config, primaryAction: UIAction { [weak self] _ in
+
+        openButton.configuration?.title = "打开\(Self.appName)"
+        openButton.isHidden = true
+        openButton.addAction(UIAction { [weak self] _ in self?.openApp() }, for: .touchUpInside)
+
+        var doneConfig = UIButton.Configuration.borderedProminent()
+        doneConfig.title = "完成"
+        let done = UIButton(configuration: doneConfig, primaryAction: UIAction { [weak self] _ in
             self?.extensionContext?.completeRequest(returningItems: nil)
         })
-        let stack = UIStackView(arrangedSubviews: [icon, titleLabel, detailLabel, done])
+        let stack = UIStackView(arrangedSubviews: [icon, titleLabel, detailLabel, openButton, done])
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 16
@@ -53,17 +65,49 @@ final class ShareViewController: UIViewController {
             return
         }
         do {
-            let data = try await Self.imageData(from: provider)
+            let data = try await Self.downsampledImageData(from: provider)
             try data.write(to: inbox.appendingPathComponent(Self.fileName), options: .atomic)
-            show("已发送到 SemanticPhotos", "打开 SemanticPhotos 即可看到与这张图片相似的照片。")
+            show("已发送到 \(Self.appName)", "打开 \(Self.appName) 即可看到原图与相似照片。")
+            openButton.isHidden = false
         } catch {
             show("无法读取这张图片", error.localizedDescription)
+        }
+    }
+
+    /// Best effort: share extensions may not be allowed to open the containing
+    /// app. If the system refuses, the copy above still tells the user what to do.
+    private func openApp() {
+        guard let url = URL(string: "semanticphotos://share") else { return }
+        extensionContext?.open(url) { [weak self] opened in
+            guard !opened else { return }
+            Task { @MainActor in
+                self?.show("已发送", "请回到主屏打开 \(Self.appName) 查看结果。")
+            }
         }
     }
 
     private func show(_ title: String, _ detail: String) {
         titleLabel.text = title
         detailLabel.text = detail
+    }
+
+    /// Decodes straight to a 2048px thumbnail with ImageIO (no full-size
+    /// UIImage in the extension's tight memory budget), then re-encodes JPEG.
+    private static func downsampledImageData(from provider: NSItemProvider) async throws -> Data {
+        let data = try await imageData(from: provider)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2048,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let image = UIImage(cgImage: cgImage)
+        return image.jpegData(compressionQuality: 0.9) ?? data
     }
 
     private static func imageData(from provider: NSItemProvider) async throws -> Data {

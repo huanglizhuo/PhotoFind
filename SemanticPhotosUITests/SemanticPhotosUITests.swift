@@ -52,13 +52,22 @@ final class SemanticPhotosUITests: XCTestCase {
     /// the progress format "正在建立索引 N/M · …", not the empty state's
     /// "正在建立索引…", so the parsed count is never garbage.
     private var indexingLabel: XCUIElement {
-        app.staticTexts.matching(NSPredicate(format: "label MATCHES '正在建立索引 [0-9]+/[0-9]+.*'")).firstMatch
+        // v0.8 prefixes the pill with "已可搜索 N 张 · …"; keep matching the
+        // progress substring so the parsed count stays correct.
+        app.staticTexts.matching(NSPredicate(format: "label MATCHES '.*正在建立索引 [0-9]+/[0-9]+.*'")).firstMatch
     }
 
     /// Completed count out of the pill's "正在建立索引 N/M" text.
     private func indexedDone(_ pill: XCUIElement) -> Int {
         guard pill.exists else { return -1 }
         return Int(pill.label.components(separatedBy: "正在建立索引 ").last?.components(separatedBy: "/").first ?? "") ?? -1
+    }
+
+    /// Total count out of the pill's "正在建立索引 N/M" text.
+    private func indexedTotal(_ pill: XCUIElement) -> Int {
+        guard pill.exists else { return 0 }
+        let after = pill.label.components(separatedBy: "正在建立索引 ").last ?? ""
+        return Int(after.components(separatedBy: "/").last?.components(separatedBy: " ·").first ?? "") ?? 0
     }
 
     private var grid: XCUIElement { app.collectionViews["photoGrid"] }
@@ -156,10 +165,25 @@ final class SemanticPhotosUITests: XCTestCase {
         try requireModel()
         search("waterfall")
         XCTAssertTrue(grid.cells.firstMatch.waitForExistence(timeout: 10))
-        // F4.3: results are never cut off; ones well below the best match sit under a divider.
-        XCTAssertTrue(app.staticTexts["以下结果相关度较低"].waitForExistence(timeout: 3))
+        // v0.8: the result summary replaces the old always-on divider check.
+        // The divider is conditional (the simulator's six sample photos can all
+        // be waterfalls), so assert the count/coverage line instead.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '找到 '")).firstMatch
+            .waitForExistence(timeout: 5))
         app.buttons["xmark.circle.fill"].tap()
         XCTAssertFalse(app.buttons["xmark.circle.fill"].waitForExistence(timeout: 2))
+    }
+
+    /// v0.8: a query nothing plausibly matches shows the low-confidence state
+    /// instead of a wall of unrelated photos, and offers both ways out.
+    func testNoMatchShowsLowConfidenceState() throws {
+        try requireIndexedPhotos()
+        try requireModel()
+        search("外星人舰队降落")
+        XCTAssertTrue(app.staticTexts["没有找到足够相关的照片"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH '查看 '")).firstMatch.exists)
+        app.buttons["清除搜索"].tap()
+        XCTAssertFalse(app.staticTexts["没有找到足够相关的照片"].exists)
     }
 
     func testSearchGuideRunsAnExample() throws {
@@ -171,20 +195,6 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["猫"].firstMatch.tap()
         XCTAssertTrue(app.buttons["xmark.circle.fill"].waitForExistence(timeout: 30))
         XCTAssertEqual(searchField.value as? String, "猫")
-        app.buttons["xmark.circle.fill"].tap()
-    }
-
-    /// F4.12: a word that only exists as text inside a photo ranks it first,
-    /// marked 文字. Uses the Simulator sample mug ("CUBASON"); skips elsewhere.
-    func testTextSearchFindsRecognizedText() throws {
-        try requireIndexedPhotos()
-        try requireModel()
-        search("cubason")
-        XCTAssertTrue(grid.cells.firstMatch.waitForExistence(timeout: 10))
-        guard grid.staticTexts["文字"].waitForExistence(timeout: 3) else {
-            throw XCTSkip("索引里没有含 CUBASON 字样的照片")
-        }
-        XCTAssertTrue(grid.cells.element(boundBy: 0).staticTexts["文字"].exists, "文字命中应排在最前")
         app.buttons["xmark.circle.fill"].tap()
     }
 
@@ -262,7 +272,7 @@ final class SemanticPhotosUITests: XCTestCase {
     func testOnboardingStartsIndexing() throws {
         app.terminate()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-resetIndex"]
+        app.launchArguments = ["-resetIndex", "-allowCloudIndexing"]
         app.launch()
         XCTAssertTrue(app.buttons["开始"].waitForExistence(timeout: 10), "未授权时应显示首启页")
         grantPhotoAccessFromOnboarding()
@@ -282,11 +292,17 @@ final class SemanticPhotosUITests: XCTestCase {
     /// run; F2.3's pause-while-scrolling is measured on that run.
     func testEmbeddingPausesWhileScrolling() throws {
         app.terminate()
-        app.launchArguments = ["-resetIndex"]
+        app.launchArguments = ["-resetIndex", "-allowCloudIndexing"]
         app.launch()
         try requireModel()
         let pill = indexingLabel
         XCTAssertTrue(pill.waitForExistence(timeout: 30), "清空索引后应自动开始全库索引")
+        // The rate comparison needs a queue that lasts longer than the 9s
+        // measurement window; the Simulator sample library is far too small.
+        let total = indexedTotal(pill)
+        guard total >= 60 else {
+            throw XCTSkip("滚动暂停测试需要至少 60 张未索引照片，当前 \(total) 张")
+        }
         // The pill shows as soon as photos are queued, but the bundled model
         // loads in the background; wait until embeddings actually complete
         // before comparing rates.

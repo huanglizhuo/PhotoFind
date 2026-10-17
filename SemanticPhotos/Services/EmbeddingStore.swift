@@ -64,7 +64,8 @@ actor EmbeddingStore {
             dim INTEGER NOT NULL,
             model_version TEXT NOT NULL,
             asset_mod_date REAL,
-            created_at REAL NOT NULL
+            created_at REAL NOT NULL,
+            perceptual_hash INTEGER
         );
         CREATE TABLE IF NOT EXISTS meta(
             key TEXT PRIMARY KEY,
@@ -95,6 +96,9 @@ actor EmbeddingStore {
     private static let addedColumns = [
         ("taken_at", "REAL"), ("favorite", "INTEGER NOT NULL DEFAULT 0"), ("kinds", "INTEGER NOT NULL DEFAULT 0"),
         ("lat", "REAL"), ("lon", "REAL"), ("city_id", "INTEGER"), ("city_km", "REAL"), ("ocr_text", "TEXT"),
+        // v0.8: 64-bit dHash for "find the original" (stored as a signed
+        // INTEGER; converted back with bitPattern).
+        ("perceptual_hash", "INTEGER"),
     ]
 
     private static func addMissingColumns(_ db: OpaquePointer?) {
@@ -116,17 +120,19 @@ actor EmbeddingStore {
 
     /// Upsert after (re-)embedding. Keeps the original import time and clears
     /// recognized text, since an edit may have changed the pixels.
-    func insert(id: String, vector: [Float], modelVersion: String, modificationDate: Date?, meta: PhotoMeta) throws {
+    func insert(id: String, vector: [Float], modelVersion: String, modificationDate: Date?,
+                meta: PhotoMeta, perceptualHash: UInt64? = nil) throws {
         normalizedTextCache.removeValue(forKey: id)
         let sql = """
         INSERT INTO embeddings(asset_id, embedding, dim, model_version, asset_mod_date, created_at,
-                               taken_at, favorite, kinds, lat, lon, city_id, city_km, ocr_text)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                               taken_at, favorite, kinds, lat, lon, city_id, city_km, perceptual_hash, ocr_text)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(asset_id) DO UPDATE SET
             embedding = excluded.embedding, dim = excluded.dim, model_version = excluded.model_version,
             asset_mod_date = excluded.asset_mod_date, taken_at = excluded.taken_at,
             favorite = excluded.favorite, kinds = excluded.kinds, lat = excluded.lat, lon = excluded.lon,
-            city_id = excluded.city_id, city_km = excluded.city_km, ocr_text = NULL;
+            city_id = excluded.city_id, city_km = excluded.city_km,
+            perceptual_hash = excluded.perceptual_hash, ocr_text = NULL;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -140,6 +146,11 @@ actor EmbeddingStore {
         bind(modificationDate?.timeIntervalSince1970, at: 5, in: stmt)
         sqlite3_bind_double(stmt, 6, Date().timeIntervalSince1970)
         bindMeta(meta, from: 7, in: stmt)
+        if let perceptualHash {
+            sqlite3_bind_int64(stmt, 14, Int64(bitPattern: perceptualHash))
+        } else {
+            sqlite3_bind_null(stmt, 14)
+        }
         guard sqlite3_step(stmt) == SQLITE_DONE else { throw storeError() }
     }
 
@@ -292,10 +303,13 @@ actor EmbeddingStore {
         return sqlite3_step(stmt) == SQLITE_ROW ? vector(stmt, 0) : nil
     }
 
-    /// Photos the text pass hasn't covered yet, newest first.
-    func idsMissingText() throws -> [String] {
+    /// Photos the text pass hasn't covered yet, newest first. `screenshotsOnly`
+    /// is the v0.8 / G2 default: `kinds` bit 0 is `PhotoKinds.screenshot`.
+    func idsMissingText(screenshotsOnly: Bool) throws -> [String] {
         let stmt = try prepare("""
-        SELECT asset_id FROM embeddings WHERE ocr_text IS NULL ORDER BY COALESCE(taken_at, created_at) DESC;
+        SELECT asset_id FROM embeddings
+        WHERE ocr_text IS NULL \(screenshotsOnly ? "AND (kinds & 1) = 1" : "")
+        ORDER BY COALESCE(taken_at, created_at) DESC;
         """)
         defer { sqlite3_finalize(stmt) }
         var ids: [String] = []
@@ -303,6 +317,30 @@ actor EmbeddingStore {
             ids.append(String(cString: sqlite3_column_text(stmt, 0)))
         }
         return ids
+    }
+
+    // MARK: - Perceptual hash (v0.8)
+
+    struct HashCandidate: Sendable, Equatable {
+        let id: String
+        let distance: Int
+    }
+
+    /// Near-duplicates of a shared image, closest first. A linear scan is fine:
+    /// 100k rows of 64-bit hashes is a few milliseconds and only happens for
+    /// "find the original", not for every text search.
+    func nearDuplicateIDs(hash: UInt64, maxDistance: Int) throws -> [HashCandidate] {
+        let stmt = try prepare("SELECT asset_id, perceptual_hash FROM embeddings WHERE perceptual_hash IS NOT NULL;")
+        defer { sqlite3_finalize(stmt) }
+        var candidates: [HashCandidate] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let stored = UInt64(bitPattern: sqlite3_column_int64(stmt, 1))
+            let distance = PerceptualHash.distance(stored, hash)
+            guard distance <= maxDistance else { continue }
+            candidates.append(HashCandidate(id: String(cString: sqlite3_column_text(stmt, 0)),
+                                            distance: distance))
+        }
+        return Array(candidates.sorted { $0.distance < $1.distance }.prefix(20))
     }
 
     // MARK: - Index config (F4.6)

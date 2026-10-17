@@ -29,6 +29,9 @@ final class AppModel {
     // Grid
     /// Every indexed photo, newest capture first (F3.1).
     private(set) var photos: [IndexedPhoto] = []
+    /// Photos in the authorized library (Limited: the selected set). Used for
+    /// "已搜索 X/Y 张" coverage; `photos.count` is what is indexed.
+    private(set) var libraryPhotoCount = 0
     var gridColumns: Int {
         didSet { UserDefaults.standard.set(gridColumns, forKey: "gridColumns") }
     }
@@ -36,8 +39,21 @@ final class AppModel {
     // Search
     var searchText = ""
     private(set) var searchResults: [ScoredPhoto]?
+    /// Full ranked list (up to `maxRankedResults`); `searchResults` is its
+    /// visible prefix so "显示更多" can append without re-ranking.
+    private var allResults: [ScoredPhoto] = []
+    private var resultLimit = 60
+    private var lastSeed: String?
+    static let resultPageSize = 60
+    static let maxRankedResults = 240
     /// Index in `searchResults` where the "相关度较低" divider goes (F4.3).
     private(set) var lowRelevanceStart: Int?
+    /// Best non-text, non-seed score is below the floor: the query has no
+    /// convincing match, so the grid offers "查看低相关结果" instead of showing
+    /// 60 random photos (v0.8).
+    private(set) var isLowConfidence = false
+    private(set) var showLowRelevance = false
+    private(set) var hasMoreResults = false
     /// Shown in the search bar for searches without typed text (相似照片).
     private(set) var searchTitle: String?
     private(set) var isSearching = false
@@ -47,7 +63,7 @@ final class AppModel {
     private(set) var recentSearches: [String]
     private var searchTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
-    static let exampleQueries = ["海边日落", "猫", "雪山", "美食", "发票", "截图", "生日蛋糕", "夜景"]
+    static let exampleQueries = ["海边日落", "猫", "雪山", "美食", "火锅", "生日蛋糕", "夜景", "穿红衣服的人"]
 
     // F2.1 (T11): onboarding replaces the UI until photo access (Limited or
     // Full) has been granted. Before the user has answered the system prompt
@@ -71,21 +87,16 @@ final class AppModel {
         return status == .denied || status == .restricted
     }
 
-    // F4.6: index/model mismatch
-    private(set) var needsRebuild = false
+    // F4.6 (T12): the index format is fixed. There is no user-facing dimension
+    // setting anymore; a model/dimension change rebuilds silently.
+    static let embeddingDimension = 256
+    var dimension: Int { Self.embeddingDimension }
 
-    // Settings (persisted)
-    var dimension: Int {
-        didSet {
-            UserDefaults.standard.set(dimension, forKey: "embeddingDimension")
-            Task { await checkIndexConsistency() }
-        }
-    }
     /// F4.3 divider: a result is low relevance below max(best − gap, floor).
     /// EmbeddingGemma's text→image similarities sit in a narrow band (measured:
     /// matches 0.72–0.76, unrelated photos 0.60–0.67), so the old fixed 0.2 never
     /// split anything; the gap follows the best match, the floor catches queries
-    /// nothing really matches. Both are tunable in the debug settings.
+    /// nothing really matches. Both are tunable in the About debug section.
     var relevanceGap: Float {
         didSet { UserDefaults.standard.set(relevanceGap, forKey: "relevanceGap") }
     }
@@ -94,13 +105,6 @@ final class AppModel {
     }
     var showScores: Bool {
         didSet { UserDefaults.standard.set(showScores, forKey: "showScores") }
-    }
-    /// F4.12 second pass, on by default.
-    var textRecognitionEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(textRecognitionEnabled, forKey: "textRecognitionEnabled")
-            pipeline.textRecognitionEnabled = textRecognitionEnabled
-        }
     }
     /// Unlocks the evaluation screen (F8) outside debug builds.
     var debugToolsEnabled: Bool {
@@ -123,7 +127,6 @@ final class AppModel {
         let created = EmbeddingPipeline(store: store, engine: engine) { [unowned self] in
             self.photoService
         }
-        created.textRecognitionEnabled = textRecognitionEnabled
         created.onPhotoIndexed = { [weak self] photo in self?.photoIndexed(photo) }
         created.onProgress = { [weak self] done, total in self?.background.update(done: done, total: total) }
         created.onFinished = { [weak self] _ in self?.pipelineFinished() }
@@ -134,11 +137,9 @@ final class AppModel {
     private init() {
         let defaults = UserDefaults.standard
         gridColumns = max(2, min(10, defaults.object(forKey: "gridColumns") as? Int ?? 4))
-        dimension = defaults.object(forKey: "embeddingDimension") as? Int ?? 256
         relevanceGap = defaults.object(forKey: "relevanceGap") as? Float ?? 0.04
         relevanceFloor = defaults.object(forKey: "relevanceFloor") as? Float ?? 0.68
         showScores = defaults.bool(forKey: "showScores")
-        textRecognitionEnabled = defaults.object(forKey: "textRecognitionEnabled") as? Bool ?? true
         debugToolsEnabled = defaults.bool(forKey: "debugToolsEnabled")
         recentSearches = defaults.stringArray(forKey: "recentSearches") ?? []
         background.onOvernightLaunch = { [weak self] in self?.runOvernight() }
@@ -163,10 +164,20 @@ final class AppModel {
         observePowerAndHeat()
         Task {
             if Self.resetIndexRequested { try? await store.clearAll() }
+            // Order matters: drop a stale index before the queue is restored,
+            // otherwise old vectors could be re-inserted after the rebuild.
+            await checkIndexConsistency()
             await reloadIndex()
             await pipeline.restore(dimension: dimension)
+            // Run the validation and catch-up after the queue is restored, so
+            // a stale-index rebuild and the cold-start sweep can't interleave.
+            // The persisted flag guard keeps a never-asked install off PhotoKit
+            // until the onboarding page is answered (F2.1).
+            if UserDefaults.standard.bool(forKey: "photoAccessGranted"), photoService.canImport {
+                await validateIndexOnColdStart()
+                indexUnindexed(userInitiated: false)
+            }
         }
-        Task { await checkIndexConsistency() }
         startIdleWatch()
 
         memoryWarningObserver = NotificationCenter.default.addObserver(
@@ -186,19 +197,27 @@ final class AppModel {
             photoService.refreshAuthorization()
             needsOnboarding = !photoService.canImport
             if photoService.canImport {
+                applyUITestCloudIndexingIfRequested()
                 photoService.allPhotos()
+                libraryPhotoCount = photoService.observedFetchResult?.count ?? 0
+                warmUpEngine()
                 photoService.onLibraryChange = { [weak self] change in
                     self?.handleLibraryChange(change)
                 }
-                Task {
-                    await validateIndexOnColdStart()
-                    // F2.8 (T11): catch up on photos added or failed while the
-                    // app wasn't running; not user-initiated, so no
-                    // BGContinuedProcessingTask.
-                    indexUnindexed(userInitiated: false)
-                }
             }
         }
+    }
+
+    /// UI tests only: the Simulator's sample photos can look iCloud-only to
+    /// local-first indexing, which would stop a run after a couple of photos.
+    /// `-allowCloudIndexing` opts the test run into downloads; normal launches
+    /// keep the default (no iCloud traffic).
+    private func applyUITestCloudIndexingIfRequested() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-allowCloudIndexing") {
+            photoService.allowNetworkForEmbedding = true
+        }
+        #endif
     }
 
     /// UI tests only (T11): `-resetIndex` wipes vectors and the pending queue
@@ -212,11 +231,17 @@ final class AppModel {
         #endif
     }
 
-    /// F1.11 (T2): the model is bundled and always ready; launch only
-    /// configures the engine and warms it up in the background (F2.3 预热).
+    /// F1.11 (T2): the model is bundled and always ready. Configuration costs
+    /// nothing, but loading it reserves several hundred MB — so the warm-up is
+    /// deferred until photo access exists (v0.8): a fresh install must be able
+    /// to show the onboarding page before the model loads.
     private func configureEngine() {
-        let engine = engine
         engine.configure(modelPath: ModelFile.url.path)
+    }
+
+    /// F2.3 / F1.10: warm up off the main actor; a no-op if already loaded.
+    private func warmUpEngine() {
+        let engine = engine
         Task.detached(priority: .utility) { try? await engine.warmUp() }
     }
 
@@ -228,7 +253,10 @@ final class AppModel {
         photoService.refreshAuthorization()
         needsOnboarding = !photoService.canImport
         guard photoService.canImport else { return }
+        applyUITestCloudIndexingIfRequested()
         photoService.allPhotos()
+        libraryPhotoCount = photoService.observedFetchResult?.count ?? 0
+        warmUpEngine()
         if photoService.onLibraryChange == nil {
             photoService.onLibraryChange = { [weak self] change in
                 self?.handleLibraryChange(change)
@@ -243,7 +271,17 @@ final class AppModel {
         switch phase {
         case .active:
             isInForeground = true
-            Task { await engine.setDelegate(.gpu, fallbackToCPU: false) }
+            // A share-extension image can arrive before SwiftUI's launch task
+            // runs; onLaunch is idempotent and configures the engine first.
+            onLaunch()
+            // The idle watch unloads the model in the background; warm it again
+            // after the delegate switch so the GPU instance is the one loaded.
+            Task {
+                await engine.setDelegate(.gpu, fallbackToCPU: false)
+                if wasPermissionRequested, photoService.canImport {
+                    try? await engine.warmUp()
+                }
+            }
             checkSharedImage()
             // F2.1 (T11): returning from Settings after granting — the flag
             // guard keeps PhotoKit untouched for never-asked installs.
@@ -293,15 +331,17 @@ final class AppModel {
         pipeline.setPaused(.thermal, info.thermalState == .serious || info.thermalState == .critical)
     }
 
-    /// Unloads the model after 5 idle minutes; the next search or import
-    /// reloads it (F1.10).
+    /// Unloads the model after 5 idle minutes **in the background**; while the
+    /// user is in the app, keeping it resident avoids the several-second reload
+    /// on the next search (v0.8). Memory pressure still unloads it immediately.
     private func startIdleWatch() {
         Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .seconds(60))
                 guard let self else { return }
                 let idle = Date().timeIntervalSince(self.lastModelUse) > 300
-                if idle, !self.pipeline.hasWork, !self.isSearching, await self.engine.isLoaded {
+                if idle, !self.isInForeground, !self.pipeline.hasWork, !self.isSearching,
+                   await self.engine.isLoaded {
                     await self.engine.unload()
                 }
             }
@@ -349,8 +389,10 @@ final class AppModel {
         guard !ProcessInfo.processInfo.arguments.contains(where: { $0.contains("uitestDropPendingQueue") }),
               photoService.canImport else { return }
         let indexed = indexedIDs
+        let all = photoService.allPhotos()
+        libraryPhotoCount = all.count
         var ids: [String] = []
-        photoService.allPhotos().enumerateObjects { asset, _, _ in
+        all.enumerateObjects { asset, _, _ in
             if !indexed.contains(asset.localIdentifier) { ids.append(asset.localIdentifier) }
         }
         guard !ids.isEmpty else { return }
@@ -360,6 +402,21 @@ final class AppModel {
         if userInitiated, pipeline.pendingCount > before {
             background.beginContinuedProcessing(total: pipeline.pendingCount)
         }
+    }
+
+    /// v0.8 / G3: photos only in iCloud that local-first indexing deferred.
+    var cloudOnlyCount: Int { pipeline.cloudOnlyIDs.count }
+
+    /// Photos in the authorized library that are not searchable yet.
+    var unindexedCount: Int { max(0, libraryPhotoCount - photos.count) }
+
+    /// The user explicitly allows iCloud downloads for indexing. Sharing and
+    /// the detail view already allow downloads independently.
+    func downloadCloudPhotos() {
+        guard photoService.canImport else { return }
+        photoService.allowNetworkForEmbedding = true
+        pipeline.clearCloudOnly()
+        indexUnindexed(userInitiated: false)
     }
 
     private func updateIndexConfigIfNeeded() async {
@@ -373,7 +430,8 @@ final class AppModel {
         let gone = Set(ids)
         pipeline.forget(gone)
         photos.removeAll { gone.contains($0.id) }
-        searchResults?.removeAll { gone.contains($0.id) }
+        allResults.removeAll { gone.contains($0.id) }
+        if searchResults != nil { applyResultLimit() }
         Task { try? await store.delete(ids: ids) }
     }
 
@@ -432,7 +490,8 @@ final class AppModel {
                 self.isModelLoading = false
                 self.lastModelUse = Date()
                 let rows = try await self.store.searchRows()
-                let hits = try await SearchEngine.rank(query: queryVector, text: query, rows: rows, k: 60)
+                let hits = try await SearchEngine.rank(query: queryVector, text: query, rows: rows,
+                                                       k: Self.maxRankedResults)
                 // A Siri search can cold-launch the app before the photo list loads.
                 if self.photos.isEmpty { await self.reloadIndex() }
                 guard !Task.isCancelled else { return }
@@ -445,19 +504,54 @@ final class AppModel {
 
     /// `seed`: the photo a similar-photo search started from, which matches
     /// itself perfectly and so isn't the reference for the divider.
-    private func show(_ hits: [SearchEngine.Hit], title: String? = nil, seed: String? = nil) {
+    /// `originalIDs`: exact/near duplicates found by the shared-image hash.
+    private func show(_ hits: [SearchEngine.Hit], title: String? = nil, seed: String? = nil,
+                      originalIDs: Set<String> = []) {
         let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
-        let results = hits.compactMap { hit in
-            byID[hit.id].map { ScoredPhoto(photo: $0, score: hit.score, textMatch: hit.textMatch) }
+        allResults = hits.compactMap { hit in
+            byID[hit.id].map {
+                ScoredPhoto(photo: $0, score: hit.score, textMatch: hit.textMatch,
+                            isOriginal: originalIDs.contains(hit.id))
+            }
         }
-        // Text matches always rank above the divider (F4.12).
-        let best = results.first { !$0.textMatch && $0.id != seed }?.score
-        lowRelevanceStart = best.flatMap { best in
-            let cutoff = max(best - relevanceGap, relevanceFloor)
-            return results.firstIndex { !$0.textMatch && $0.id != seed && $0.score < cutoff }
-        }
+        lastSeed = seed
+        resultLimit = Self.resultPageSize
+        showLowRelevance = false
+        applyResultLimit()
         searchTitle = title
-        searchResults = results
+    }
+
+    /// Slices the ranked list and recomputes the low-relevance divider. Text
+    /// matches and the similar-photo seed never act as the reference (F4.12).
+    private func applyResultLimit() {
+        let visible = Array(allResults.prefix(resultLimit))
+        let scores = visible.map(\.score)
+        let excluded = Set(visible.enumerated()
+            .filter { $0.element.textMatch || $0.element.id == lastSeed }
+            .map(\.offset))
+        let best = SearchEngine.Relevance.bestScore(scores, excluding: excluded)
+        isLowConfidence = SearchEngine.Relevance.isLowConfidence(best: best, floor: relevanceFloor)
+        lowRelevanceStart = best
+            .map { SearchEngine.Relevance.cutoff(best: $0, gap: relevanceGap, floor: relevanceFloor) }
+            .flatMap { SearchEngine.Relevance.firstIndexBelow(scores, cutoff: $0, excluding: excluded) }
+        hasMoreResults = allResults.count > resultLimit
+        searchResults = visible
+    }
+
+    /// Number of ranked results before the visible page limit.
+    var totalResultCount: Int { allResults.count }
+
+    /// "显示更多": appends the next page without re-ranking.
+    func loadMoreResults() {
+        guard hasMoreResults else { return }
+        resultLimit = min(resultLimit + Self.resultPageSize, allResults.count)
+        applyResultLimit()
+    }
+
+    /// The user chose to see the low-relevance tail after a "没有找到足够相关"
+    /// state; the grid then shows all currently ranked results.
+    func showLowRelevanceResults() {
+        showLowRelevance = true
     }
 
     /// F4.9: the photo's stored vector is the query, so no inference runs.
@@ -471,7 +565,8 @@ final class AppModel {
             defer { if !Task.isCancelled { self.isSearching = false } }
             guard let vector = try? await self.store.vector(for: id),
                   let rows = try? await self.store.searchRows(includeText: false) else { return }
-            guard var hits = try? await SearchEngine.rank(query: vector, rows: rows, k: 60),
+            guard var hits = try? await SearchEngine.rank(query: vector, rows: rows,
+                                                         k: Self.maxRankedResults),
                   !Task.isCancelled else { return }
             // The photo itself always leads (score ≈ 1).
             if let seed = hits.firstIndex(where: { $0.id == id }), seed != 0 {
@@ -492,13 +587,48 @@ final class AppModel {
         searchTask = Task { [weak self] in
             guard let self else { return }
             defer { if !Task.isCancelled { self.isSearching = false } }
+
+            // v0.8: exact/near duplicates first. A forwarded WeChat image is a
+            // recompressed/resized copy; dHash reliably identifies the original
+            // while the semantic ranker would return "similar scenes".
+            let hash = PerceptualHash.dHash(image)
+            let duplicates: [EmbeddingStore.HashCandidate] = if let hash {
+                (try? await self.store.nearDuplicateIDs(
+                    hash: hash, maxDistance: PerceptualHash.nearDuplicateDistance)) ?? []
+            } else {
+                []
+            }
+            let duplicateIDs = Set(duplicates.map(\.id))
+            let originalIDs = Set(duplicates
+                .filter { $0.distance <= PerceptualHash.originalDistance }
+                .map(\.id))
+            let originalHits = duplicates.map {
+                SearchEngine.Hit(id: $0.id,
+                                 score: 1 - Float($0.distance) / 64,
+                                 textMatch: false)
+            }
+
             guard let vector = try? await self.engine.embedImage(image, dimension: self.dimension),
                   let rows = try? await self.store.searchRows(includeText: false),
-                  let hits = try? await SearchEngine.rank(query: vector, rows: rows, k: 60),
-                  !Task.isCancelled else { return }
+                  let hits = try? await SearchEngine.rank(query: vector, rows: rows,
+                                                         k: Self.maxRankedResults),
+                  !Task.isCancelled else {
+                // Even if inference fails, the hash result alone can answer
+                // "is this photo already in my library?".
+                if !originalHits.isEmpty {
+                    if self.photos.isEmpty { await self.reloadIndex() }
+                    self.searchText = ""
+                    self.show(originalHits, title: "找到原图", originalIDs: originalIDs)
+                }
+                return
+            }
             self.lastModelUse = Date()
+            if self.photos.isEmpty { await self.reloadIndex() }
             self.searchText = ""
-            self.show(hits, title: "与分享的图片相似")
+            let semantic = hits.filter { !duplicateIDs.contains($0.id) }
+            self.show(originalHits + semantic,
+                      title: originalHits.isEmpty ? "与分享的图片相似" : "找到原图与相似照片",
+                      originalIDs: originalIDs)
         }
     }
 
@@ -508,7 +638,13 @@ final class AppModel {
         searchText = ""
         searchTitle = nil
         searchResults = nil
+        allResults = []
+        lastSeed = nil
+        resultLimit = Self.resultPageSize
         lowRelevanceStart = nil
+        isLowConfidence = false
+        showLowRelevance = false
+        hasMoreResults = false
         isSearching = false
         isModelLoading = false
     }
@@ -536,23 +672,44 @@ final class AppModel {
         showSimilar(toImage: image)
     }
 
-    // MARK: - Index consistency (F4.6)
-
-    func checkIndexConsistency() async {
-        guard let config = try? await store.indexConfig() else {
-            needsRebuild = false
-            return
+    /// v0.8: a small URL surface for Shortcuts and the share extension:
+    /// `semanticphotos://search?q=海边日落` and `semanticphotos://share`.
+    func handleOpenURL(_ url: URL) {
+        guard url.scheme == "semanticphotos" else { return }
+        onLaunch()
+        switch url.host {
+        case "search":
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "q" })?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let query, !query.isEmpty { runSearch(query) }
+        case "share":
+            checkSharedImage()
+        default:
+            break
         }
-        needsRebuild = config.modelVersion != ModelFile.version || config.dimension != dimension
     }
 
-    func rebuildIndex() {
-        Task {
-            try? await store.clearAll()
-            photos = []
-            needsRebuild = false
-            indexUnindexed(userInitiated: true)
-        }
+    // MARK: - Index consistency (F4.6)
+
+    /// F4.6 (T12): a model or dimension change is not a user decision. Drop the
+    /// stale vectors, write the new config and queue the library again in the
+    /// background — no banner, no button.
+    func checkIndexConsistency() async {
+        guard let config = try? await store.indexConfig() else { return }
+        guard config.modelVersion != ModelFile.version || config.dimension != dimension else { return }
+        try? await store.clearAll()
+        photos = []
+        allResults = []
+        searchResults = nil
+        lowRelevanceStart = nil
+        isLowConfidence = false
+        showLowRelevance = false
+        hasMoreResults = false
+        try? await store.setIndexConfig(EmbeddingStore.IndexConfig(modelVersion: ModelFile.version, dimension: dimension))
+        // The launch pipeline reloads the now-empty index and `indexUnindexed`
+        // queues the library afterwards; queuing here would still see the old
+        // `photos` set and skip everything.
     }
 
     // MARK: - F5 sync
@@ -620,10 +777,12 @@ final class AppModel {
               let details = change.changeDetails(for: fetchResult) else {
             // Fetch result changed too much to diff: fall back to a full validation.
             photoService.allPhotos()
+            libraryPhotoCount = photoService.observedFetchResult?.count ?? 0
             Task { await validateIndexOnColdStart() }
             return
         }
         photoService.updateObservedFetchResult(details.fetchResultAfterChanges)
+        libraryPhotoCount = details.fetchResultAfterChanges.count
 
         let indexedIDs = self.indexedIDs
         let changedIndexed = details.changedObjects.filter { indexedIDs.contains($0.localIdentifier) }

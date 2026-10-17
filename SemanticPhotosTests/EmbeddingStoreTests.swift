@@ -187,4 +187,47 @@ extension SearchOptimizationTests {
         let reopened = EmbeddingStore(directory: directory)
         #expect(try await reopened.searchRows().first?.normalizedText == "after clear")
     }
+
+    // MARK: - v0.8: screenshot-only OCR + perceptual hash
+
+    @Test func textQueueOnlyIncludesScreenshots() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScreenshotQueue-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = EmbeddingStore(directory: directory)
+        var screenMeta = PhotoMeta()
+        screenMeta.takenAt = Date(timeIntervalSince1970: 200)
+        screenMeta.kinds = [.screenshot]
+        var photoMeta = PhotoMeta()
+        photoMeta.takenAt = Date(timeIntervalSince1970: 100)
+        photoMeta.kinds = [.selfie]
+        try await store.insert(id: "screen", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: screenMeta)
+        try await store.insert(id: "photo", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: photoMeta)
+        #expect(try await store.idsMissingText(screenshotsOnly: true) == ["screen"])
+        #expect(Set(try await store.idsMissingText(screenshotsOnly: false)) == ["screen", "photo"])
+    }
+
+    @Test func perceptualHashRoundTripsAndRanksNearDuplicates() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HashRanking-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = EmbeddingStore(directory: directory)
+        let target: UInt64 = 0xFFFF_FFFF_FFFF_FFFF
+        try await store.insert(id: "exact", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: PhotoMeta(), perceptualHash: target)
+        try await store.insert(id: "near", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: PhotoMeta(),
+                               perceptualHash: target ^ 0b1111)
+        try await store.insert(id: "far", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: PhotoMeta(), perceptualHash: 0)
+        try await store.insert(id: "legacy", vector: [1], modelVersion: "m",
+                               modificationDate: nil, meta: PhotoMeta())
+        let hits = try await store.nearDuplicateIDs(hash: target, maxDistance: 8)
+        #expect(hits.map { $0.id } == ["exact", "near"], "近重复按距离排序，没有 hash 的旧行被忽略")
+        #expect(hits.first?.distance == 0)
+        #expect(hits.last?.distance == 4)
+        #expect(try await store.nearDuplicateIDs(hash: target, maxDistance: 0).map { $0.id } == ["exact"])
+    }
 }

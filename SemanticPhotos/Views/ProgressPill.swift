@@ -38,11 +38,18 @@ struct ProgressPill: View {
     private var pipeline: EmbeddingPipeline { model.pipeline }
 
     private var title: String {
-        // F2.4: say why queued work isn't moving.
+        // F2.4: say why queued work isn't moving, and how to resume it.
         if pipeline.isPaused, let reason = pipeline.pauseReasons.first, !pipeline.isRunning {
-            return "已暂停：\(reason.text)"
+            switch reason {
+            case .lowPower: return "已暂停：低电量模式 · 充电后继续"
+            case .thermal: return "已暂停：设备过热 · 降温后继续"
+            }
         }
         var text = pipeline.progressText
+        if model.photos.count > 0 {
+            // v0.8: lead with what is already searchable, not the backlog.
+            text = "已可搜索 \(model.photos.count) 张 · " + text
+        }
         if pipeline.phase == .embed, let eta = etaText {
             text += " · \(eta)"
         }

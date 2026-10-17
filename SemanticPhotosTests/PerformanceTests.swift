@@ -228,7 +228,8 @@ final class PerformanceTests: XCTestCase {
             }
             var samples: [Double] = []
             for iteration in 0..<8 {
-                var state = GridState(ids: [], scores: [:], textMatches: [], processing: [], failed: [],
+                var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
+                                      processing: [], failed: [],
                                       isSearch: false, lowRelevanceStart: nil, selection: nil, dates: [:])
                 let ms = timed {
                     state.ids = photos.map(\.id)

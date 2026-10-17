@@ -39,5 +39,7 @@ struct ScoredPhoto: Identifiable, Equatable {
     let score: Float
     /// Hit through recognized text (F4.12) rather than the image vector alone.
     var textMatch = false
+    /// Near-duplicate of a shared image (v0.8 dHash); the grid badges it 原图.
+    var isOriginal = false
     var id: String { photo.id }
 }

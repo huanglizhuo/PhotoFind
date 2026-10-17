@@ -17,20 +17,23 @@ struct OnboardingView: View {
             Image(systemName: "photo.badge.shield.checkmark")
                 .font(.system(size: 56))
                 .foregroundStyle(.tint)
-            // G1 (name / final copy) is undecided; default promise wording.
+            Text(AppInfo.displayName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+            // G1 (final copy) still depends on T5; this is the default promise.
             Text("用一句话描述，就能找到相册里的那张照片")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
             VStack(alignment: .leading, spacing: 14) {
                 point("iphone", "照片只在本地处理", "语义索引在这台设备上生成，照片不会上传。")
-                point("wifi.slash", "完全不联网", "App 自身不发出任何网络请求，地点名称来自内置离线数据库。")
+                point("wifi.slash", "App 自身不联网", "地点名称来自内置离线数据库。iCloud 照片由系统按需下载；默认不会主动下载索引图。")
                 point("chart.bar.xaxis", "不收集任何数据", "没有统计和埋点，删除 App 即删除全部索引。")
             }
             .padding(.horizontal, 4)
             Spacer()
             if model.showsDeniedState {
                 // F2.1: denied/restricted — offer Settings, never re-prompt.
-                Text("您拒绝了照片访问。请在系统设置中允许 SemanticPhotos 访问照片，才能在本地建立索引。")
+                Text("您拒绝了照片访问。请在系统设置中允许 \(AppInfo.displayName) 访问照片，才能在本地建立索引。")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
@@ -64,8 +67,9 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(requesting)
-                Text("可以选择只授权部分照片。")
+                Text("可以选择只授权部分照片。首次会为允许的照片建立索引，照片多时可能需要一段时间；可以随时退出，之后自动继续。只索引照片，不含视频。")
                     .font(.footnote)
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }
         }
