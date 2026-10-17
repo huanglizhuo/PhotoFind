@@ -236,7 +236,7 @@ final class AppModel {
     /// deferred until photo access exists (v0.8): a fresh install must be able
     /// to show the onboarding page before the model loads.
     private func configureEngine() {
-        engine.configure(modelPath: ModelFile.url.path)
+        engine.configure(modelPath: ModelFile.bundledURL.path)
     }
 
     /// F2.3 / F1.10: warm up off the main actor; a no-op if already loaded.

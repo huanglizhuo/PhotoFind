@@ -81,7 +81,9 @@ actor EmbeddingEngine {
         if let embedder { return embedder }
         guard let modelPath = modelPath.withLock({ $0 }) else { throw EngineError.modelNotConfigured }
         let options = UniversalEmbedderOptions()
-        options.baseOptions.modelAssetPath = modelPath
+        // LiteRT/MLDrift writes its cache files next to the model path; the
+        // bundle is read-only on device, so resolve to the writable copy.
+        options.baseOptions.modelAssetPath = ModelFile.writablePath(for: modelPath)
         options.baseOptions.delegate = delegate == .gpu ? .GPU : .CPU
         options.l2Normalize = true
         let embedder = try UniversalEmbedder(options: options)
