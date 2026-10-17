@@ -16,21 +16,26 @@ enum SearchEngine {
 
     /// Top-K by score, never cut off (F4.3); the caller places the
     /// "相关度较低" divider.
-    static func rank(query: [Float], text: String = "", rows: [EmbeddingStore.SearchRow], k: Int) -> [Hit] {
+    @concurrent
+    static func rank(query: [Float], text: String = "", rows: [EmbeddingStore.SearchRow], k: Int) async throws -> [Hit] {
+        try Task.checkCancellation()
         let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         var hits: [Hit] = []
         hits.reserveCapacity(rows.count)
-        for row in rows {
+        for (index, row) in rows.enumerated() {
+            if index.isMultiple(of: 256) { try Task.checkCancellation() }
             let n = min(query.count, row.vector.count)
             guard n > 0 else { continue }
             var dot: Float = 0
             vDSP_dotpr(query, 1, row.vector, 1, &dot, vDSP_Length(n))
-            let textMatch = !words.isEmpty && row.text.map { recognized in
-                let lowered = recognized.lowercased()
+            let textMatch = !words.isEmpty && row.normalizedText.map { lowered in
                 return words.allSatisfy { lowered.contains($0) }
             } == true
             hits.append(Hit(id: row.id, score: dot + (textMatch ? textBoost : 0), textMatch: textMatch))
         }
-        return Array(hits.sorted { $0.score > $1.score }.prefix(k))
+        try Task.checkCancellation()
+        let result = Array(hits.sorted { $0.score > $1.score }.prefix(k))
+        try Task.checkCancellation()
+        return result
     }
 }

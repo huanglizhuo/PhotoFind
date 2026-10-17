@@ -361,9 +361,9 @@ extension AppModel {
         let start = ContinuousClock.now
         let vector = try await engine.embedText(query, dimension: dimension)
         let rows = try await store.searchRows()
-        let hits = SearchEngine.rank(query: vector, text: query, rows: rows, k: 60)
+        let hits = try await SearchEngine.rank(query: vector, text: query, rows: rows, k: 60)
         let elapsed = ContinuousClock.now - start
-        let hitsWithoutText = SearchEngine.rank(query: vector, text: "", rows: rows, k: 60)
+        let hitsWithoutText = try await SearchEngine.rank(query: vector, text: "", rows: rows, k: 60)
         return (hits.map(\.id), hitsWithoutText.map(\.id),
                 Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
     }

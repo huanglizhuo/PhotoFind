@@ -22,6 +22,14 @@ actor EmbeddingStore {
         let vector: [Float]
         /// Recognized text (F4.12); nil until the second pass has run.
         let text: String?
+        let normalizedText: String?
+
+        init(id: String, vector: [Float], text: String?, normalizedText: String? = nil) {
+            self.id = id
+            self.vector = vector
+            self.text = text
+            self.normalizedText = normalizedText ?? text?.lowercased()
+        }
     }
 
     /// Stages of the persistent queue: text recognition runs after embedding.
@@ -34,6 +42,12 @@ actor EmbeddingStore {
     // only this actor's serial executor ever touches it otherwise.
     nonisolated(unsafe) private var db: OpaquePointer?
     private var openError: String?
+    // Only OCR text is cached; vectors are still released after each search.
+    private var normalizedTextCache: [String: String] = [:]
+
+    func clearSearchTextCache() {
+        normalizedTextCache.removeAll()
+    }
 
     init(directory: URL? = nil) {
         let dir = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -103,6 +117,7 @@ actor EmbeddingStore {
     /// Upsert after (re-)embedding. Keeps the original import time and clears
     /// recognized text, since an edit may have changed the pixels.
     func insert(id: String, vector: [Float], modelVersion: String, modificationDate: Date?, meta: PhotoMeta) throws {
+        normalizedTextCache.removeValue(forKey: id)
         let sql = """
         INSERT INTO embeddings(asset_id, embedding, dim, model_version, asset_mod_date, created_at,
                                taken_at, favorite, kinds, lat, lon, city_id, city_km, ocr_text)
@@ -147,6 +162,7 @@ actor EmbeddingStore {
 
     /// Stores recognized text; an empty string marks "processed, no text".
     func setText(_ text: String, for id: String) throws {
+        normalizedTextCache.removeValue(forKey: id)
         let stmt = try prepare("UPDATE embeddings SET ocr_text = ? WHERE asset_id = ?;")
         defer { sqlite3_finalize(stmt) }
         bindText(text, at: 1, in: stmt)
@@ -156,6 +172,7 @@ actor EmbeddingStore {
 
     func delete(ids: [String]) throws {
         guard !ids.isEmpty else { return }
+        for id in ids { normalizedTextCache.removeValue(forKey: id) }
         let rows = try prepare("DELETE FROM embeddings WHERE asset_id = ?;")
         defer { sqlite3_finalize(rows) }
         let queued = try prepare("DELETE FROM pending WHERE asset_id = ?;")
@@ -172,6 +189,7 @@ actor EmbeddingStore {
     }
 
     func clearAll() throws {
+        clearSearchTextCache()
         guard sqlite3_exec(db, "DELETE FROM embeddings; DELETE FROM pending;", nil, nil, nil) == SQLITE_OK else {
             throw storeError()
         }
@@ -246,13 +264,23 @@ actor EmbeddingStore {
         return rows
     }
 
-    func searchRows() throws -> [SearchRow] {
-        let stmt = try prepare("SELECT asset_id, embedding, ocr_text FROM embeddings;")
+    func searchRows(includeText: Bool = true) throws -> [SearchRow] {
+        try Task.checkCancellation()
+        let stmt = try prepare("SELECT asset_id, embedding, \(includeText ? "ocr_text" : "NULL") FROM embeddings;")
         defer { sqlite3_finalize(stmt) }
         var rows: [SearchRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
+            if rows.count.isMultiple(of: 256) { try Task.checkCancellation() }
+            let id = String(cString: sqlite3_column_text(stmt, 0))
             let text = sqlite3_column_type(stmt, 2) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 2))
-            rows.append(SearchRow(id: String(cString: sqlite3_column_text(stmt, 0)), vector: vector(stmt, 1), text: text))
+            let normalized = text.map { text in
+                guard !text.isEmpty else { return text }
+                if let cached = normalizedTextCache[id] { return cached }
+                let normalized = text.lowercased()
+                normalizedTextCache[id] = normalized
+                return normalized
+            }
+            rows.append(SearchRow(id: id, vector: vector(stmt, 1), text: text, normalizedText: normalized))
         }
         return rows
     }

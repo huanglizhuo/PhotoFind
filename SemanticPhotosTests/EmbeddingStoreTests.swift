@@ -105,3 +105,86 @@ struct EmbeddingStoreTests {
         #expect(try await store.searchRows().isEmpty)
     }
 }
+
+
+struct SearchOptimizationTests {
+    @Test @MainActor func rankingLeavesMainActorFree() async throws {
+        let rows = (0..<50_000).map { i in
+            EmbeddingStore.SearchRow(id: "p\(i)", vector: [1, 0],
+                text: String(repeating: "Beach sunset 中文旅行 ", count: 12))
+        }
+        var heartbeatRan = false
+        let heartbeat = Task { @MainActor in heartbeatRan = true }
+        let hits = try await SearchEngine.rank(query: [1, 0], text: "beach", rows: rows, k: 60)
+        #expect(heartbeatRan, "排名运行期间主 actor 必须能处理已排队的 UI 工作")
+        #expect(hits.count == 60)
+        await heartbeat.value
+    }
+}
+
+
+extension SearchOptimizationTests {
+    @Test func rankingMatchesOriginalSemantics() async throws {
+        let texts: [String?] = [nil, "", "BEACH Sunset 中文", "Straße İstanbul CAFÉ", "截图 发票", "ＡＢＣ abc", "é e\u{301}"]
+        let rows = (0..<100).map { i in
+            EmbeddingStore.SearchRow(id: "p\(i)", vector: [Float(i % 9) / 10, 0.25], text: texts[i % texts.count])
+        } + [EmbeddingStore.SearchRow(id: "empty", vector: [], text: "beach")]
+        for text in ["", "  ", "BEACH sunset", "中文", "straße", "İstanbul", "CAFÉ", "发票", "ＡＢＣ", "e\u{301}", "missing"] {
+            for k in [0, 1, 60, 200] {
+                let actual = try await SearchEngine.rank(query: [1, 0], text: text, rows: rows, k: k)
+                #expect(actual == BaselineSearchEngine.rank(query: [1, 0], text: text, rows: rows, k: k))
+            }
+        }
+        #expect(try await SearchEngine.rank(query: [], rows: rows, k: 60).isEmpty)
+    }
+
+    @Test func cancelledRankingThrowsInsteadOfPublishing() async {
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await SearchEngine.rank(query: [1], rows: [], k: 60)
+        }
+        do {
+            _ = try await task.value
+            Issue.record("取消的搜索不应返回可发布的结果")
+        } catch {
+            #expect(error is CancellationError)
+        }
+    }
+
+    @Test func textCacheTracksEveryMutationAndCanBeReleased() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("SearchCache-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = EmbeddingStore(directory: directory)
+        try await store.insert(id: "a", vector: [1], modelVersion: "test", modificationDate: nil, meta: PhotoMeta())
+        try await store.setText("BEACH 中文", for: "a")
+        let vectorOnly = try #require(try await store.searchRows(includeText: false).first)
+        #expect(vectorOnly.vector == [1])
+        #expect(vectorOnly.text == nil && vectorOnly.normalizedText == nil)
+        for _ in 0..<2 {
+            let row = try #require(try await store.searchRows().first)
+            #expect(row.text == "BEACH 中文")
+            #expect(row.normalizedText == "beach 中文")
+        }
+        try await store.setText("SUNSET İstanbul", for: "a")
+        #expect(try await store.searchRows().first?.normalizedText == "SUNSET İstanbul".lowercased())
+        await store.clearSearchTextCache()
+        #expect(try await store.searchRows().first?.text == "SUNSET İstanbul")
+        #expect(try await store.searchRows().first?.normalizedText == "SUNSET İstanbul".lowercased())
+        try await store.insert(id: "a", vector: [0.5], modelVersion: "test", modificationDate: nil, meta: PhotoMeta())
+        #expect(try await store.searchRows().first?.normalizedText == nil)
+        try await store.setText("", for: "a")
+        #expect(try await store.searchRows().first?.normalizedText == "")
+        try await store.delete(ids: ["a"])
+        #expect(try await store.searchRows().isEmpty)
+        try await store.insert(id: "a", vector: [1], modelVersion: "test", modificationDate: nil, meta: PhotoMeta())
+        try await store.setText("NEW", for: "a")
+        #expect(try await store.searchRows().first?.normalizedText == "new")
+        try await store.clearAll()
+        #expect(try await store.searchRows().isEmpty)
+        try await store.insert(id: "a", vector: [1], modelVersion: "test", modificationDate: nil, meta: PhotoMeta())
+        try await store.setText("AFTER CLEAR", for: "a")
+        #expect(try await store.searchRows().first?.normalizedText == "after clear")
+        let reopened = EmbeddingStore(directory: directory)
+        #expect(try await reopened.searchRows().first?.normalizedText == "after clear")
+    }
+}

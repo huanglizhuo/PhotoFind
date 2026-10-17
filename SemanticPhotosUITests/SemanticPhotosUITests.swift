@@ -318,3 +318,16 @@ final class SemanticPhotosUITests: XCTestCase {
         app.launch()
     }
 }
+
+
+/// Measures process launches after onboarding; does not reset the photo library.
+final class LaunchPerformanceTests: XCTestCase {
+    func testLaunchPerformance() {
+        let app = XCUIApplication()
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        measure(metrics: [XCTApplicationLaunchMetric()], options: options) {
+            app.launch()
+        }
+    }
+}

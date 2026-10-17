@@ -173,7 +173,10 @@ final class AppModel {
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { await self?.engine.unload() }
+            Task {
+                await self?.store.clearSearchTextCache()
+                await self?.engine.unload()
+            }
         }
 
         // Only touch PhotoKit at launch after access was granted once (flag is
@@ -415,19 +418,25 @@ final class AppModel {
         searchTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                self.isSearching = false
-                self.isModelLoading = false
+                if !Task.isCancelled {
+                    self.isSearching = false
+                    self.isModelLoading = false
+                }
             }
             do {
-                if !(await self.engine.isLoaded) { self.isModelLoading = true }
+                let loaded = await self.engine.isLoaded
+                try Task.checkCancellation()
+                self.isModelLoading = !loaded
                 let queryVector = try await self.engine.embedText(query, dimension: self.dimension)
+                try Task.checkCancellation()
                 self.isModelLoading = false
                 self.lastModelUse = Date()
                 let rows = try await self.store.searchRows()
+                let hits = try await SearchEngine.rank(query: queryVector, text: query, rows: rows, k: 60)
                 // A Siri search can cold-launch the app before the photo list loads.
                 if self.photos.isEmpty { await self.reloadIndex() }
                 guard !Task.isCancelled else { return }
-                self.show(SearchEngine.rank(query: queryVector, text: query, rows: rows, k: 60))
+                self.show(hits)
             } catch {
                 if !Task.isCancelled { self.searchError = error.localizedDescription }
             }
@@ -455,10 +464,15 @@ final class AppModel {
     func showSimilar(to id: String) {
         searchTask?.cancel()
         debounceTask?.cancel()
+        isSearching = true
+        isModelLoading = false
         searchTask = Task { [weak self] in
-            guard let self, let vector = try? await self.store.vector(for: id),
-                  let rows = try? await self.store.searchRows() else { return }
-            var hits = SearchEngine.rank(query: vector, rows: rows, k: 60)
+            guard let self else { return }
+            defer { if !Task.isCancelled { self.isSearching = false } }
+            guard let vector = try? await self.store.vector(for: id),
+                  let rows = try? await self.store.searchRows(includeText: false) else { return }
+            guard var hits = try? await SearchEngine.rank(query: vector, rows: rows, k: 60),
+                  !Task.isCancelled else { return }
             // The photo itself always leads (score ≈ 1).
             if let seed = hits.firstIndex(where: { $0.id == id }), seed != 0 {
                 hits.insert(hits.remove(at: seed), at: 0)
@@ -472,15 +486,19 @@ final class AppModel {
     /// the extension.
     func showSimilar(toImage image: UIImage) {
         isSearching = true
+        isModelLoading = false
         searchTask?.cancel()
+        debounceTask?.cancel()
         searchTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isSearching = false }
+            defer { if !Task.isCancelled { self.isSearching = false } }
             guard let vector = try? await self.engine.embedImage(image, dimension: self.dimension),
-                  let rows = try? await self.store.searchRows() else { return }
+                  let rows = try? await self.store.searchRows(includeText: false),
+                  let hits = try? await SearchEngine.rank(query: vector, rows: rows, k: 60),
+                  !Task.isCancelled else { return }
             self.lastModelUse = Date()
             self.searchText = ""
-            self.show(SearchEngine.rank(query: vector, rows: rows, k: 60), title: "与分享的图片相似")
+            self.show(hits, title: "与分享的图片相似")
         }
     }
 
@@ -492,6 +510,7 @@ final class AppModel {
         searchResults = nil
         lowRelevanceStart = nil
         isSearching = false
+        isModelLoading = false
     }
 
     private func rememberSearch(_ text: String) {
