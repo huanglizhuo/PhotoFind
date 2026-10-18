@@ -1,6 +1,12 @@
 # PhotoFind · 一句找图
 
+<img src="SemanticPhotos/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="PhotoFind app icon" width="120" />
+
 An iPhone photo search app. Describe a photo in Chinese or English, search using another image, or browse your library by color. Photos and search indexes are processed on-device.
+
+## Screenshots
+
+![PhotoFind screenshots in Chinese and English](StoreAssets/screenshot-overview.png)
 
 ## Requirements
 
