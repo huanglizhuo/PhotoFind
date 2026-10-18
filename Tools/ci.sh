@@ -104,6 +104,6 @@ asc_ci builds upload --app-id 6823997811 --file build/Export/SemanticPhotos.ipa 
   --version "$version" --build-number "$build_number" --platform ios --wait > build/upload.json
 asc_ci builds list --app-id 6823997811 --version "$version" --platform ios --limit 100 > build/builds.json
 build_id=$(python3 Tools/release_checks.py build build/builds.json "$version" "$build_number")
-asc_ci builds add-beta-group --build-id "$build_id" --beta-group-id 1910af7c-a927-495c-92be-a2b47c787691 > build/distribution.json
+swift Tools/verify_testflight.swift "$build_id" 1910af7c-a927-495c-92be-a2b47c787691 > build/distribution.txt
 printf 'TestFlight %s (%s), build ID %s\n' "$version" "$build_number" "$build_id" | tee build/release-result.txt
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then cat build/release-result.txt >> "$GITHUB_STEP_SUMMARY"; fi
