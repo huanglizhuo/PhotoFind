@@ -91,7 +91,9 @@ signing=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_PRIVATE_KEY_PATH
 xcodebuild -project SemanticPhotos.xcodeproj -scheme SemanticPhotos -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath build/Release \
   -clonedSourcePackagesDirPath "$cache/SourcePackages" -archivePath build/PhotoFind.xcarchive \
-  CURRENT_PROJECT_VERSION="$build_number" "${signing[@]}" archive > build/archive.log 2>&1 || { tail -60 build/archive.log; exit 1; }
+  CURRENT_PROJECT_VERSION="$build_number" \
+  OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/photofind-ci.keychain-db" \
+  "${signing[@]}" archive > build/archive.log 2>&1 || { tail -60 build/archive.log; exit 1; }
 python3 Tools/release_checks.py archive build/PhotoFind.xcarchive "$version" "$build_number"
 xcodebuild -exportArchive -archivePath build/PhotoFind.xcarchive \
   -exportOptionsPlist Config/ExportOptions.plist -exportPath build/Export \
