@@ -4,6 +4,8 @@
 
 Find the photo you have in mind. PhotoFind is an iPhone app that searches your library with words, a reference image, or color. Photo analysis and search run on-device.
 
+![PhotoFind app overview](StoreAssets/screenshot-overview.png)
+
 ## Features
 
 - **Describe a memory** — search in Chinese or English without manually tagging photos.
