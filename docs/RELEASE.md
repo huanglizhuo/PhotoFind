@@ -10,21 +10,23 @@ The version and build number are shared in project.yml; CI overrides the build n
 - [x] Obsolete implementation plans and reports removed; maintained documentation consolidated.
 - [x] Public source/history scan and GitHub push (main; private mirror removed from history).
 - [x] Privacy/support pages deployed and linked in the app; Apple privacy disclosure published.
-- [x] Release archive 1.0 (4): all three bundles, versions, entitlements, privacy, iPhone targeting and distribution signing validated.
-- [x] Dedicated macOS runner and repeatable CI tests: 80 passed, zero failed/skipped.
-- [x] GitHub Actions run produces a processed TestFlight build in the internal group: 1.0 (4), VALID, findImage membership verified.
+- [x] Release archive 1.0 (5): all three bundles, versions, entitlements, privacy, iPhone targeting and distribution signing validated.
+- [x] Dedicated macOS runner and repeatable CI tests: 93 passed, zero failed/skipped in both the current CI and release workflow.
+- [x] GitHub Actions run produces a processed TestFlight build in the internal group: 1.0 (5), VALID, findImage membership verified.
 - [x] User-reported physical-device model download passed on 18 October 2026. The agent did not independently observe the installation path or network trace; this does not claim the separate retained-data upgrade checklist was completed.
 - [x] Simulator UI acceptance: 18 distinct scenarios passed after fixing test scrolling and completing the color fixtures (406 indexed photos). Covers startup input/cancel, selection/deletion confirmation, sharing, photo detail dismissal, search controls, color scrolling, EN/ZH, appearance and storage confirmation.
 - [ ] Physical-device upgrade and retained-data acceptance: user elected to install manually after pipeline completion. Existing device data remains untouched; protected backup has 1,219 indexed photos and zero pending photos. Full fresh-install, limited-permission and real network-failure/offline coverage is not claimed.
 - [x] Bilingual store name, subtitle, description, keywords, promotional text, support/privacy URLs and review contact saved on 18 October 2026. English store name: PhotoFind: Private Search; Chinese: 一句找图.
 - [x] Store screenshots uploaded via asc: 5 per locale (zh-Hans/en-US), each in 1320×2868 and 1206×2622. All 20 images COMPLETE; all 20 placements ACTIVE in correct 1–5 order. Actual simulator captures use licensed demo photos and the current working tree. Evidence: StoreAssets/asc-verification.json; reproduction: StoreAssets/editor/app-store-screenshots.json.
 - [x] First release priced free; all 175 current territories selected, including China mainland. Future territories are not automatically enabled. Version 1.0 is configured for manual release.
-- [ ] Before formal review: upload/link a release build matching the current working-tree UI, complete retained-data upgrade acceptance, and resolve China mainland ICP requirements. User currently has no filing number; the field remains empty. Region selection does not establish distribution eligibility.
+- [x] Current source `232e090` was pushed, published as TestFlight 1.0 (5), and linked to App Store version 1.0. English and Chinese beta notes saved.
+- [ ] Retained-data physical-device acceptance and China mainland ICP work are explicitly deferred by the user. No filing number is entered; region selection does not establish distribution eligibility.
+- [ ] The Business page reports an updated Apple Developer Program License Agreement that the Account Holder must review and accept before new-app/update submission. This legal acceptance was not performed by the agent; the user has been notified.
 - [ ] Formal review remains deliberately unsubmitted. Submit the first app and SemanticPhotosModel v1 together only on a later explicit instruction.
 
 CI validation for build 4: 80 tests passed, zero failures or unexpected skips. UI evidence is retained locally in ReleaseAcceptance.xcresult, ReleaseAcceptanceRetry.xcresult and ColorScrollAcceptance.xcresult. The initial UI run had two failures: a test needed to scroll to the storage row, and the color-scroll fixture needed enough fully indexed photos; both targeted reruns passed.
 
-Latest processed TestFlight build: **1.0 (4)**, build ID `ae577568-dcd3-4931-a051-c16bd56b5338`, source commit `2efcc79`. [Publish TestFlight run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119388888) completed the full test → archive → export → upload → Apple processing → internal-group verification flow. [Independent CI run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119389036) also passed.
+Latest processed TestFlight build: **1.0 (5)**, build ID `8717a760-fae9-4968-897d-759c3850235d`, source commit `232e090`. [Publish TestFlight run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39135173845) completed the full test → archive → export → upload → Apple processing → internal-group verification flow. [Independent CI run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39135156951) also passed. Each validated 93 tests, none failed or skipped. The app and both extensions are signed as 1.0 (5).
 
 The previous build 3 was valid, but its workflow failed on redundant manual assignment to an automatically populated internal group. The pipeline now reads Apple's group/build relationship and verifies the exact uploaded build instead.
 
@@ -73,13 +75,13 @@ Release validation also rejects accidental iPad targeting (`UIDeviceFamily` must
 
 ## Manual upgrade acceptance
 
-Install version 1.0 (4), or a later processed build, through TestFlight over the existing app; do not delete the app first. Confirm the build number in About, existing search history/settings, retained index count (baseline: 1,219), and no repeated model download. Try a text search, scroll results and open/close a photo. Do not rebuild the index or clear storage during this upgrade check. The protected local backup is outside Git at `/Users/lizhuo/owork/photofind-backups/2026-10-18/device-library`.
+Install version 1.0 (5), or a later processed build, through TestFlight over the existing app; do not delete the app first. Confirm the build number in About, existing search history/settings, retained index count (baseline: 1,219), and no repeated model download. Try a text search, scroll results and open/close a photo. Do not rebuild the index or clear storage during this upgrade check. The protected local backup is outside Git at `/Users/lizhuo/owork/photofind-backups/2026-10-18/device-library`.
 
 ## Store materials (18 October 2026)
 
 `StoreAssets/metadata/` contains the uploaded bilingual copy and review instructions; personal reviewer contact was entered directly into App Store Connect, not stored here. `photo-sources.json` records demo image sources. `capture-manifest.json` records the simulator and raw screenshot hashes. The screenshot editor uses the requested app-store-screenshots skill template with a lilac palette; all five screens stand alone so controls and captions are never split. The editor build passed, and its standard Export bundle generated 40 opaque PNGs across two locales and four sizes.
 
-App Store Connect readiness passes localization, screenshots, price and review contact. A current release build is not yet linked; do not link build 4 as if it contained the newer working-tree search changes. China mainland is selected but the user has no ICP filing number yet. No review submission, automatic release or new binary publication was performed during store-material preparation.
+App Store Connect readiness now passes build linkage/validity, localization, screenshots, price and review contact after attaching build 5. Its `isReadyToSubmit` result does not validate the outstanding developer agreement, China mainland eligibility, model asset-pack submission or deferred device acceptance. China mainland remains selected without an ICP filing number. No review submission or automatic release was performed; version 1.0 remains PREPARE_FOR_SUBMISSION with releaseType MANUAL. The first App Store review must include SemanticPhotosModel v1 together with the app.
 
 To reopen the screenshot editor:
 
