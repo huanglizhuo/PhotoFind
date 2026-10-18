@@ -1,48 +1,35 @@
 {
   "fill": {
-    "automatic-gradient": "extended-srgb:0.45098,0.23137,0.90980,1.00000"
+    "automatic-gradient": "extended-srgb:0.82745,0.69020,0.97255,1.00000"
   },
   "groups": [
     {
+      "name": "Original Meerkat Photo Stack",
       "layers": [
         {
-          "image-name": "MeerkatReady.png",
-          "name": "Meerkat"
+          "image-name": "MeerkatPhotoStack.png",
+          "name": "Original artwork",
+          "position": {
+            "scale": 0.8165869219,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
         }
       ],
-      "name": "Meerkat",
       "shadow": {
-        "kind": "neutral",
-        "opacity": 0.2
+        "kind": "layer-color",
+        "opacity": 0.22
       },
-      "specular": false,
+      "specular": true,
       "translucency": {
         "enabled": false,
-        "value": 0.5
-      }
-    },
-    {
-      "layers": [
-        {
-          "image-name": "Photo-Card.svg",
-          "name": "Photo-Card"
-        }
-      ],
-      "name": "Glass Photo",
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.25
-      },
-      "translucency": {
-        "enabled": true,
-        "value": 0.65
+        "value": 0.0
       }
     }
   ],
   "supported-platforms": {
-    "circles": [
-      "watchOS"
-    ],
     "squares": "shared"
   }
 }

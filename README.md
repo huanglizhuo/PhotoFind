@@ -18,7 +18,7 @@ Find the photo you have in mind. PhotoFind is an iPhone app that searches your l
 
 | Area | Implementation |
 | --- | --- |
-| App icon | Layered Liquid Glass artwork in Icon Composer, with system-rendered default, dark, clear, and tinted appearances. |
+| App icon | Original meerkat-and-photo composition in Icon Composer, with a separate background, Liquid Glass edge highlights, and system-rendered dark, clear, and tinted appearances. |
 | Native interface | Swift 6 and SwiftUI, with a reusable UIKit collection view for the photo grid. |
 | On-device AI | EmbeddingGemma text-and-image embeddings through MediaPipe, with a fixed 256-dimensional search index. |
 | Model delivery | Apple-hosted Background Assets download the model separately from the app. |
