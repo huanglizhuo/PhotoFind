@@ -52,7 +52,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait"
-        TARGETED_DEVICE_FAMILY: 1
+        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
   SemanticPhotosDownloader:
     type: extensionkit-extension
@@ -72,7 +72,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: BackgroundAssets/Downloader/Downloader.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
-        TARGETED_DEVICE_FAMILY: 1
+        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
   SemanticPhotosShare:
     type: app-extension
@@ -89,7 +89,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "查找相似照片"
         CODE_SIGN_ENTITLEMENTS: Config/Share.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
-        TARGETED_DEVICE_FAMILY: 1
+        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
   SemanticPhotosTests:
     type: bundle.unit-test

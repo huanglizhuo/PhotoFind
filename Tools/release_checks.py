@@ -7,6 +7,12 @@ import subprocess
 import sys
 
 
+def next_number(data, version, proposed):
+    numbers = [int(b['buildNumber']) for b in data['data']
+               if b.get('version') == version and b.get('platform') == 'IOS' and b['buildNumber'].isdigit()]
+    return max(int(proposed), max(numbers, default=0) + 1)
+
+
 def processed_build(data, version, number):
     matches = [b for b in data['data'] if b.get('version') == version and b.get('buildNumber') == number]
     assert len(matches) == 1, 'Uploaded build is missing or ambiguous'
@@ -24,6 +30,7 @@ def archive(path, version, number):
         info = plistlib.loads((bundle / 'Info.plist').read_bytes())
         actual.add(info['CFBundleIdentifier'])
         assert info['CFBundleVersion'] == number and info['CFBundleShortVersionString'] == version, bundle
+        assert info['UIDeviceFamily'] == [1], 'PhotoFind ships for iPhone only'
         subprocess.run(['codesign', '--verify', '--strict', str(bundle)], check=True)
         entitlements = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(bundle)], stderr=subprocess.DEVNULL))
         assert entitlements.get('com.apple.developer.team-identifier') == 'N9Q47Y2LQ4'
@@ -54,9 +61,16 @@ if __name__ == '__main__':
         tests(*args)
     elif mode == 'build':
         print(processed_build(json.loads(Path(args[0]).read_text()), *args[1:]))
+    elif mode == 'next-number':
+        print(next_number(json.loads(Path(args[0]).read_text()), *args[1:]))
     elif mode == 'self-test':
         good = {'data': [{'id': 'test', 'version': '1.0', 'buildNumber': '2', 'processingState': 'VALID', 'expired': False}]}
         assert processed_build(good, '1.0', '2') == 'test'
+        uploads = {'data': [{'version': '1.0', 'platform': 'IOS', 'buildNumber': '2', 'state': 'FAILED'},
+                            {'version': '2.0', 'platform': 'IOS', 'buildNumber': '99'}]}
+        assert next_number(uploads, '1.0', '2') == 3
+        assert next_number(uploads, '1.0', '5') == 5
+        assert next_number({'data': []}, '1.0', '1') == 1
         for version, number, state, expired in [('1.1', '2', 'VALID', False), ('1.0', '1', 'VALID', False), ('1.0', '2', 'PROCESSING', False), ('1.0', '2', 'VALID', True)]:
             bad = {'data': [dict(good['data'][0], version=version, buildNumber=number, processingState=state, expired=expired)]}
             try:

@@ -87,6 +87,8 @@ xcodegen generate --spec build/ci-project.json --project-root . --project .
 version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/CI/Build/Products/Debug-iphonesimulator/SemanticPhotos.app/Info.plist)
 build_number=$(asc_ci builds next-number --app-id 6823997811 --version "$version" --platform ios)
 [[ "$build_number" =~ ^[0-9]+$ ]] || { echo 'Invalid next build number'; exit 1; }
+asc_ci builds uploads list --app-id 6823997811 > build/previous-uploads.json
+build_number=$(python3 Tools/release_checks.py next-number build/previous-uploads.json "$version" "$build_number")
 signing=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_PRIVATE_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
 xcodebuild -project SemanticPhotos.xcodeproj -scheme SemanticPhotos -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath build/Release \

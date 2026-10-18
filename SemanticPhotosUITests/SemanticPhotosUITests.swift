@@ -340,7 +340,10 @@ final class SemanticPhotosUITests: XCTestCase {
     func testStorageRebuildRequiresConfirmationAndCanCancel() throws {
         try pauseIndexingForUITest()
         app.buttons["关于"].tap()
-        app.buttons["openStorageManagement"].tap()
+        let storage = app.buttons["openStorageManagement"]
+        for _ in 0..<4 where !storage.isHittable { app.swipeUp() }
+        XCTAssertTrue(storage.isHittable)
+        storage.tap()
         XCTAssertTrue(app.staticTexts["搜索模型"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["照片索引"].exists)
         let rebuild = app.buttons["重建搜索索引"]
