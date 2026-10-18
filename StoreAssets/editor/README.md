@@ -5,9 +5,11 @@ A pre-built Next.js + ShadCN editor for generating App Store and Google Play scr
 ## Quick start
 
 ```bash
-bun install   # or pnpm / yarn / npm
-bun dev       # http://localhost:3000
+npm ci --legacy-peer-deps
+npm run dev -- --hostname 127.0.0.1   # http://localhost:3000
 ```
+
+Use npm and the committed `package-lock.json` to keep installs reproducible. The template uses a React 19 release candidate, so installation needs `--legacy-peer-deps`.
 
 ## What's inside
 

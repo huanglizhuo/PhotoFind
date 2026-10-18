@@ -540,7 +540,7 @@ export function SlideCanvas({
         overflow: "hidden",
       }}
     >
-      <SlideBackground slide={slide} cW={cW} cH={cH} theme={theme} />
+      <SlideBackground slide={slide} cW={cW} theme={theme} />
       <SlideElements
         slide={slide}
         device={device}
@@ -646,7 +646,7 @@ export function DeckCanvas({
               overflow: "hidden",
             }}
           >
-            <SlideBackground slide={slide} cW={cW} cH={cH} theme={theme} />
+            <SlideBackground slide={slide} cW={cW} theme={theme} />
             {showGuides && <ScreenGuide cW={cW} cH={cH} index={index} active={active} />}
           </div>
         );
@@ -712,12 +712,10 @@ export function DeckCanvas({
 function SlideBackground({
   slide,
   cW,
-  cH,
   theme,
 }: {
   slide: Slide;
   cW: number;
-  cH: number;
   theme: Theme;
 }) {
   const inverted = !!slide.inverted;

@@ -22,8 +22,6 @@ struct PhotoMeta: Equatable, Sendable {
     /// Nearest city in the offline database (F3.5.1) and its distance.
     var cityID: Int?
     var cityKm: Double?
-
-    var hasLocation: Bool { latitude != nil && longitude != nil }
 }
 
 struct PhotoKinds: OptionSet, Hashable, Sendable {

@@ -22,7 +22,6 @@ struct PhotoGridView: View {
         // v0.8: when nothing passes the relevance floor, don't show a wall of
         // unrelated photos; the empty state offers the low-relevance tail.
         let showLowConfidence = results != nil && model.isLowConfidence && !model.showLowRelevance
-        let photos = showLowConfidence ? [] : (results?.map(\.photo) ?? model.photos)
         ZStack(alignment: .top) {
             PhotoCollection(
                 model: model,
@@ -77,7 +76,7 @@ struct PhotoGridView: View {
         .overlay {
             if showLowConfidence {
                 lowConfidenceState
-            } else if photos.isEmpty {
+            } else if results?.isEmpty ?? model.photos.isEmpty {
                 emptyState
             }
         }

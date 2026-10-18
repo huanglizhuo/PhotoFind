@@ -87,7 +87,7 @@ To reopen the screenshot editor:
 
 ```sh
 cd /Users/lizhuo/owork/monDigital/iOS/SemanticPhotos/StoreAssets/editor
-npm install --legacy-peer-deps
+npm ci --legacy-peer-deps
 npm run dev -- --hostname 127.0.0.1 --port 3088
 ```
 
