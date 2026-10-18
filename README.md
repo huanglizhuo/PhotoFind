@@ -1,6 +1,6 @@
 # PhotoFind · 一句找图
 
-<img src="SemanticPhotos/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="PhotoFind app icon" width="120" />
+<img src="docs/assets/app-icon.png" alt="PhotoFind app icon" width="120" />
 
 Find the photo you have in mind. PhotoFind is an iPhone app that searches your library with words, a reference image, or color. Photo analysis and search run on-device.
 
@@ -18,6 +18,7 @@ Find the photo you have in mind. PhotoFind is an iPhone app that searches your l
 
 | Area | Implementation |
 | --- | --- |
+| App icon | Layered Liquid Glass artwork in Icon Composer, with system-rendered default, dark, clear, and tinted appearances. |
 | Native interface | Swift 6 and SwiftUI, with a reusable UIKit collection view for the photo grid. |
 | On-device AI | EmbeddingGemma text-and-image embeddings through MediaPipe, with a fixed 256-dimensional search index. |
 | Model delivery | Apple-hosted Background Assets download the model separately from the app. |
