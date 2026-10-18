@@ -1,7 +1,7 @@
 #!/bin/bash
-# T2 (PRD §2.2 / F1.11): download the EmbeddingGemma 2 model for bundling.
+# Download the EmbeddingGemma 2 model for the Apple-hosted asset pack.
 # Dev-machine only; the file is NOT committed to git (see .gitignore).
-# HuggingFace first, Dropbox mirror as fallback. Verifies size + SHA-256.
+# Public upstream only. Verifies size + SHA-256.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,8 +11,6 @@ EXPECT_SIZE=387710976
 EXPECT_SHA256="92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0"
 
 HF_URL="https://huggingface.co/litert-community/embeddinggemma-2-text-vision-440m-litert-lm/resolve/main/embeddinggemma-2-text-vision-440m.litertlm"
-# Mirror copied from ModelDownloadManager.modelURLs (deleted in T2).
-DROPBOX_URL="REMOVED_PRIVATE_MIRROR"
 
 verify() {
   local size sha
@@ -36,7 +34,7 @@ if [ -f "$DEST" ] && verify; then
   exit 0
 fi
 
-for url in "$HF_URL" "$DROPBOX_URL"; do
+for url in "$HF_URL"; do
   echo "downloading from: $url"
   # -C - resumes a partial .part download; HF 302-redirects to CDN (-L).
   if curl -L --fail --retry 3 --retry-delay 5 -C - \
@@ -46,13 +44,13 @@ for url in "$HF_URL" "$DROPBOX_URL"; do
       echo "OK: $DEST verified (size + sha256)"
       exit 0
     fi
-    echo "verification failed, trying next mirror" >&2
+    echo "verification failed, no verified download available" >&2
     rm -f "$DEST"
   else
-    echo "download failed, trying next mirror" >&2
+    echo "download failed, no verified download available" >&2
     rm -f "$DEST.part"
   fi
 done
 
-echo "FAILED: could not fetch a verified model from any mirror" >&2
+echo "FAILED: could not fetch a verified model from upstream" >&2
 exit 1

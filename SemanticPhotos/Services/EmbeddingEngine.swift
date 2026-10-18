@@ -46,10 +46,12 @@ actor EmbeddingEngine {
     }
 
     func embedText(_ text: String, dimension: Int) throws -> [Float] {
-        try withFallback { try Self.extract(result: $0.embed(text: text), dimension: dimension) }
+        try Task.checkCancellation()
+        return try withFallback { try Self.extract(result: $0.embed(text: text), dimension: dimension) }
     }
 
     func embedImage(_ image: UIImage, dimension: Int) throws -> [Float] {
+        try Task.checkCancellation()
         let mpImage = try MPImage(uiImage: image)
         return try withFallback { try Self.extract(result: $0.embed(image: mpImage), dimension: dimension) }
     }
@@ -81,9 +83,7 @@ actor EmbeddingEngine {
         if let embedder { return embedder }
         guard let modelPath = modelPath.withLock({ $0 }) else { throw EngineError.modelNotConfigured }
         let options = UniversalEmbedderOptions()
-        // LiteRT/MLDrift writes its cache files next to the model path; the
-        // bundle is read-only on device, so resolve to the writable copy.
-        options.baseOptions.modelAssetPath = ModelFile.writablePath(for: modelPath)
+        options.baseOptions.modelAssetPath = modelPath
         options.baseOptions.delegate = delegate == .gpu ? .GPU : .CPU
         options.l2Normalize = true
         let embedder = try UniversalEmbedder(options: options)
@@ -120,8 +120,8 @@ actor EmbeddingEngine {
         case emptyEmbedding
         var errorDescription: String? {
             switch self {
-            case .modelNotConfigured: return "模型未就绪"
-            case .emptyEmbedding: return "模型返回了空向量"
+            case .modelNotConfigured: return String(localized: "模型未就绪")
+            case .emptyEmbedding: return String(localized: "模型返回了空向量")
             }
         }
     }

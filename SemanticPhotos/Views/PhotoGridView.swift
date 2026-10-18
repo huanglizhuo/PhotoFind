@@ -27,8 +27,8 @@ struct PhotoGridView: View {
             PhotoCollection(
                 model: model,
                 state: GridState(
-                    ids: photos.map(\.id),
-                    scores: model.showScores ? Dictionary(uniqueKeysWithValues: (results ?? []).map { ($0.id, $0.score) }) : [:],
+                    ids: showLowConfidence ? [] : results?.map(\.id) ?? model.library.ids,
+                    scores: model.showSimilarityScores ? Dictionary(uniqueKeysWithValues: (results ?? []).map { ($0.id, $0.score) }) : [:],
                     textMatches: Set((results ?? []).filter(\.textMatch).map(\.id)),
                     originals: Set((results ?? []).filter(\.isOriginal).map(\.id)),
                     processing: model.pipeline.processingIDs,
@@ -36,7 +36,7 @@ struct PhotoGridView: View {
                     isSearch: results != nil,
                     lowRelevanceStart: results == nil ? nil : model.lowRelevanceStart,
                     selection: selection,
-                    dates: results == nil ? Dictionary(photos.map { ($0.id, $0.sortDate) }, uniquingKeysWith: { $1 }) : [:]),
+                    dates: results == nil ? model.library.dates : [:]),
                 onSelect: { id in
                     if selection == nil {
                         onOpen(id)
@@ -88,7 +88,7 @@ struct PhotoGridView: View {
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text("没有找到足够相关的照片")
+            Text(String(localized: "没有找到足够相关的照片"))
                 .font(.headline)
             Text(detailText)
                 .font(.subheadline)
@@ -99,7 +99,7 @@ struct PhotoGridView: View {
                     Button {
                         model.downloadCloudPhotos()
                     } label: {
-                        Text("下载 \(model.cloudOnlyCount) 张 iCloud 照片")
+                        Text(String(localized: "下载 \(model.cloudOnlyCount) 张 iCloud 照片"))
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -107,11 +107,12 @@ struct PhotoGridView: View {
                 Button {
                     model.showLowRelevanceResults()
                 } label: {
-                    Text("查看 \(model.totalResultCount) 张低相关结果")
+                    Text(String(localized: "查看 \(model.totalResultCount) 张低相关结果"))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                Button("清除搜索") { model.clearSearch() }
+                if model.searchFilter.isActive { Button(String(localized: "清除筛选")) { model.searchFilter = SearchFilter() } }
+                Button(String(localized: "清除搜索")) { model.clearSearch() }
                     .buttonStyle(.bordered)
             }
             .padding(.top, 4)
@@ -123,12 +124,12 @@ struct PhotoGridView: View {
 
     private var detailText: String {
         if model.cloudOnlyCount > 0 {
-            return "还有 \(model.cloudOnlyCount) 张照片在 iCloud，尚未索引；下载后可能找到。"
+            return String(localized: "还有 \(model.cloudOnlyCount) 张照片在 iCloud，尚未索引；下载后可能找到。")
         }
         if model.unindexedCount > 0 {
-            return "还有 \(model.unindexedCount) 张照片没有索引完，完成后可能找到。"
+            return String(localized: "还有 \(model.unindexedCount) 张照片没有索引完，完成后可能找到。")
         }
-        return "换一种更具体的描述试试，比如“海边日落”“穿红衣服的人”。"
+        return String(localized: "换一种更具体的描述试试，比如“海边日落”“朋友合照”。")
     }
 
     @ViewBuilder
@@ -137,37 +138,64 @@ struct PhotoGridView: View {
             if model.searchResults != nil {
                 if model.pipeline.hasWork {
                     // F4.3: nothing matched because the index is still being built.
-                    Text("照片还在建立索引")
+                    Text(String(localized: "照片还在建立索引"))
                         .foregroundStyle(.secondary)
                 } else {
                     Image(systemName: "magnifyingglass")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("没有找到匹配的照片")
+                    Text(String(localized: "没有找到匹配的照片"))
                         .foregroundStyle(.secondary)
                 }
+                if model.searchFilter.isActive {
+                    Text(String(localized: "试试扩大时间范围，或关闭截图、收藏筛选。"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Button(String(localized: "清除筛选")) { model.searchFilter = SearchFilter() }
+                }
+            } else if [.readingIndex, .checkingLibrary, .preparingSearch].contains(model.startupPhase) {
+                MeerkatMascot().frame(height: 120)
+                Text(String(localized: "正在接回你的照片"))
+                    .font(.headline)
+                Text(model.startupPhase.title)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else if model.photoService.authorization == .limited && model.libraryPhotoCount == 0 {
                 // v0.8: Limited with an empty selection is not "no photos".
                 Image(systemName: "photo.badge.plus")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text("还没有选择照片")
+                Text(String(localized: "还没有选择照片"))
                     .foregroundStyle(.secondary)
-                Button("选择照片") { model.photoService.presentLimitedLibraryPicker() }
+                Button(String(localized: "选择照片")) { model.photoService.presentLimitedLibraryPicker() }
                     .buttonStyle(.borderedProminent)
-            } else if model.pipeline.hasWork || model.libraryPhotoCount > 0 {
-                // F3.6 (T11): indexing with an empty grid (Full and Limited
-                // access is decided before the grid can appear, F2.1); a
-                // non-empty library with nothing indexed is on its way into
-                // the queue, so it reads the same.
-                ProgressView()
-                Text("正在建立索引…")
+            } else if model.pipeline.hasWork {
+                MeerkatMascot(animated: !model.pipeline.isPaused).frame(height: 120)
+                SetupSteps(current: 2)
+                    .frame(maxWidth: 340)
+                    .padding(.horizontal, 24)
+                if model.pipeline.isPaused {
+                    Label(model.pipeline.pauseReasons.contains(.user) ? String(localized: "已手动暂停，可在整理详情中继续") : String(localized: "等待关闭低电量模式"), systemImage: "pause.circle")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                    Text(String(localized: "正在建立索引…"))
+                        .foregroundStyle(.secondary)
+                }
+            } else if model.libraryPhotoCount > 0 {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.largeTitle)
                     .foregroundStyle(.secondary)
+                Text(String(localized: "照片尚未完成整理"))
+                Text(String(localized: "查看下方状态，重试或下载所需照片。"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else {
                 Image(systemName: "photo.on.rectangle.angled")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text("相册里还没有照片")
+                Text(String(localized: "相册里还没有照片"))
                     .foregroundStyle(.secondary)
             }
         }
@@ -189,14 +217,20 @@ struct GridState {
     var dates: [String: Date]
 }
 
-private struct PhotoCollection: UIViewRepresentable {
+struct PhotoCollection: UIViewRepresentable {
     let model: AppModel
     let state: GridState
     let onSelect: (String) -> Void
     let onMonth: (String) -> Void
     let onScrolling: (Bool) -> Void
+    var scrollToID: String? = nil
+    var scrollRequest = 0
+    var accessibilityID = "photoGrid"
+    /// An independent grid starts at this density without changing the library's saved zoom.
+    var initialColumns: Int? = nil
+    var onVisibleIndex: ((Int) -> Void)? = nil
 
-    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model) }
+    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model, initialColumns: initialColumns) }
 
     func makeUIView(context: Context) -> UICollectionView { context.coordinator.collectionView }
 
@@ -205,13 +239,19 @@ private struct PhotoCollection: UIViewRepresentable {
         coordinator.onSelect = onSelect
         coordinator.onMonth = onMonth
         coordinator.onScrolling = onScrolling
+        coordinator.onVisibleIndex = onVisibleIndex
         coordinator.update(state)
+        view.accessibilityIdentifier = accessibilityID
+        coordinator.scroll(to: scrollToID, request: scrollRequest)
     }
 }
 
-private final class GridCoordinator: ThumbnailGridCoordinator {
+final class GridCoordinator: ThumbnailGridCoordinator {
     var onMonth: (String) -> Void = { _ in }
     var onScrolling: (Bool) -> Void = { _ in }
+    var onVisibleIndex: ((Int) -> Void)?
+    private var lastVisibleIndex: Int?
+    private let savesColumns: Bool
 
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
     private var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
@@ -221,6 +261,15 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
     /// F4.4: where the grid was before a search, restored when it is cleared.
     private var gridOffset: CGPoint?
     private var currentMonth: String?
+    private var lastScrollRequest = 0
+
+    func scroll(to id: String?, request: Int) {
+        guard request != lastScrollRequest else { return }
+        lastScrollRequest = request
+        guard let id, let path = dataSource.indexPath(for: id) else { return }
+        collectionView.layoutIfNeeded()
+        collectionView.scrollToItem(at: path, at: .top, animated: false)
+    }
 
     private static let dim = UIColor.black.withAlphaComponent(0.35)
     private static let retryIcon = UIImage(systemName: "arrow.clockwise.circle.fill")?
@@ -229,29 +278,34 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
     private static let selectedIcon = UIImage(
         systemName: "checkmark.circle.fill",
         withConfiguration: UIImage.SymbolConfiguration(textStyle: .title2)
-            .applying(UIImage.SymbolConfiguration(paletteColors: [.white, .tintColor])))
+            .applying(UIImage.SymbolConfiguration(paletteColors: [.white, .systemBlue])))
+    private static let unselectedIcon = UIImage(systemName: "circle",
+        withConfiguration: UIImage.SymbolConfiguration(textStyle: .title2))?
+        .withTintColor(.white, renderingMode: .alwaysOriginal)
     private static let monthFormat: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月"
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("yyyyMMMM")
         return formatter
     }()
 
     // Pinch: the photo under the fingers, the point inside it they touched,
     // and where on screen that point must stay.
     private var anchor: (index: Int, unitY: CGFloat, viewportY: CGFloat)?
+    private var snapshotVersion = 0
     private var pinchStartColumns: CGFloat = 0
     private var snapLink: CADisplayLink?
     private var snapFrom: CGFloat = 0
     private var snapTo: CGFloat = 0
     private var snapStart: CFTimeInterval = 0
 
-    init(model: AppModel) {
-        super.init(model: model, columns: model.gridColumns)
+    init(model: AppModel, initialColumns: Int? = nil) {
+        savesColumns = initialColumns == nil
+        super.init(model: model, columns: initialColumns ?? model.gridColumns)
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched)))
-        let registration = UICollectionView.CellRegistration<PhotoCell, String> { [unowned self] cell, _, id in
-            configure(cell, id: id)
+        let registration = UICollectionView.CellRegistration<PhotoCell, String> { [unowned self] cell, indexPath, id in
+            configure(cell, id: id, indexPath: indexPath)
         }
         let divider = UICollectionView.SupplementaryRegistration<DividerView>(elementKind: ZoomGridLayout.dividerKind) { _, _, _ in }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
@@ -267,15 +321,23 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
         state = new
         if new.isSearch && !old.isSearch { gridOffset = collectionView.contentOffset }
         if new.ids != old.ids {
-            // One batched fetch for unseen ids instead of one per cell on the main thread.
-            let missing = new.ids.filter { assets[$0] == nil }
-            if !missing.isEmpty {
-                assets.merge(model.photoService.assetsMap(for: missing)) { $1 }
-            }
+            let retained = Set(new.ids)
+            assets = assets.filter { retained.contains($0.key) }
             var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
             snapshot.appendSections([0])
             snapshot.appendItems(new.ids)
-            dataSource.apply(snapshot, animatingDifferences: false)
+            snapshotVersion += 1
+            let version = snapshotVersion
+            let visible = collectionView.indexPathsForVisibleItems.min()
+            let anchorID = !old.isSearch && !new.isSearch && collectionView.contentOffset.y > 0
+                ? visible.flatMap { dataSource.itemIdentifier(for: $0) } : nil
+            let offset = visible.map { collectionView.contentOffset.y - layout.frame(at: $0.item).minY } ?? 0
+            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+                guard let self, self.snapshotVersion == version, let anchorID,
+                      let path = self.dataSource.indexPath(for: anchorID) else { return }
+                self.collectionView.layoutIfNeeded()
+                self.collectionView.contentOffset.y = self.layout.frame(at: path.item).minY + offset
+            }
         }
         // F4.3: low-relevance results start below a divider.
         let breakIndex = new.lowRelevanceStart.flatMap { $0 < new.ids.count ? $0 : nil }
@@ -291,26 +353,52 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
     }
 
     override func asset(at indexPath: IndexPath) -> PHAsset? {
-        dataSource.itemIdentifier(for: indexPath).flatMap { assets[$0] }
+        guard let id = dataSource.itemIdentifier(for: indexPath) else { return nil }
+        return cachedAsset(id, at: indexPath)
     }
 
-    private func configure(_ cell: PhotoCell, id: String) {
-        load(cell, id: id, asset: assets[id])
+    private func cachedAsset(_ id: String, at indexPath: IndexPath) -> PHAsset? {
+        if let asset = assets[id] { return asset }
+        guard state.ids.indices.contains(indexPath.item) else { return nil }
+        let start = indexPath.item / 64 * 64
+        let end = min(start + 64, state.ids.count)
+        // Keep nearby asset objects only; opening a large library must not fetch every PHAsset.
+        if assets.count >= 384 {
+            let nearby = Set(state.ids[max(0, start - 128)..<min(state.ids.count, end + 128)])
+            assets = assets.filter { nearby.contains($0.key) }
+        }
+        let missing = state.ids[start..<end].filter { assets[$0] == nil }
+        assets.merge(model.photoService.assetsMap(for: Array(missing))) { $1 }
+        return assets[id]
+    }
+
+    private func configure(_ cell: PhotoCell, id: String, indexPath: IndexPath? = nil) {
+        let path = indexPath ?? dataSource.indexPath(for: id)
+        load(cell, id: id, asset: path.flatMap { cachedAsset(id, at: $0) })
         applyBadges(to: cell)
     }
 
-    /// F3.4 processing / failed state, debug score (F4.3), "文字" for text
+    /// F3.4 processing / failed state, similarity score (F4.3), "文字" for text
     /// matches (F4.12), or the selection check while multi-selecting (F4.11).
     private func applyBadges(to cell: PhotoCell) {
         guard let id = cell.representedID else { return }
+        let photo = model.photo(id)
+        cell.setAccessibility(date: photo?.sortDate, favorite: photo?.meta.isFavorite == true,
+                              selecting: state.selection != nil, textMatch: state.textMatches.contains(id),
+                              original: state.originals.contains(id), score: state.scores[id])
         if let selection = state.selection {
             let selected = selection.contains(id)
-            cell.setOverlay(tint: selected ? Self.selectedTint : nil, icon: selected ? Self.selectedIcon : nil)
+            cell.setOverlay(tint: selected ? Self.selectedTint : nil,
+                            icon: selected ? Self.selectedIcon : Self.unselectedIcon,
+                            score: state.scores[id], selectionMode: true)
+            if selected { cell.accessibilityTraits.insert(.selected) }
+            else { cell.accessibilityTraits.remove(.selected) }
             return
         }
+        cell.accessibilityTraits.remove(.selected)
         let processing = state.processing.contains(id), failed = state.failed.contains(id)
-        let badge: String? = state.originals.contains(id) ? "原图"
-            : state.textMatches.contains(id) ? "文字" : nil
+        let badge: String? = state.originals.contains(id) ? String(localized: "原图")
+            : state.textMatches.contains(id) ? String(localized: "文字") : nil
         cell.setOverlay(tint: processing || failed ? Self.dim : nil, spinning: processing,
                         icon: failed && !processing ? Self.retryIcon : nil, score: state.scores[id],
                         badge: badge)
@@ -323,7 +411,16 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
         guard !state.isSearch, !state.ids.isEmpty, scrollView.isTracking || scrollView.isDecelerating else { return }
         let top = CGPoint(x: 1, y: scrollView.contentOffset.y + scrollView.adjustedContentInset.top + 1)
         let index = layout.index(at: top)
-        guard index < state.ids.count, let date = state.dates[state.ids[index]] else { return }
+        guard state.ids.indices.contains(index) else { return }
+        if onVisibleIndex != nil, index != lastVisibleIndex {
+            lastVisibleIndex = index
+            // A layout callback can occur during updateUIView; publish after that update.
+            Task { @MainActor [weak self] in
+                guard let self, self.lastVisibleIndex == index else { return }
+                self.onVisibleIndex?(index)
+            }
+        }
+        guard let date = state.dates[state.ids[index]] else { return }
         let month = Self.monthFormat.string(from: date)
         if month != currentMonth {
             currentMonth = month
@@ -404,7 +501,7 @@ private final class GridCoordinator: ThumbnailGridCoordinator {
         snapLink = nil
         setColumns(snapTo)
         anchor = nil
-        model.gridColumns = Int(snapTo)
+        if savesColumns { model.gridColumns = Int(snapTo) }
         // Cached and requested sizes belong to the old zoom: drop the cache and
         // re-request cells that grew (they keep showing their image meanwhile).
         model.photoService.cachingManager.stopCachingImagesForAllAssets()
@@ -419,7 +516,7 @@ private final class DividerView: UICollectionReusableView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         let label = UILabel()
-        label.text = "以下结果相关度较低"
+        label.text = String(localized: "以下结果相关度较低")
         label.font = .preferredFont(forTextStyle: .footnote)
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -504,6 +601,7 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        model.pipeline.noteInteraction()
         collectionView.deselectItem(at: indexPath, animated: false)
         if let id = (collectionView.cellForItem(at: indexPath) as? PhotoCell)?.representedID { onSelect(id) }
     }
@@ -652,6 +750,15 @@ final class ZoomGridLayout: UICollectionViewLayout {
 }
 
 final class PhotoCell: UICollectionViewCell {
+    private struct Overlay: Equatable {
+        let tint: UIColor?
+        let spinning: Bool
+        let icon: UIImage?
+        let score: Float?
+        let badge: String?
+        let selectionMode: Bool
+    }
+    private var overlay: Overlay?
     private(set) var representedID: String?
     private(set) var representedAsset: PHAsset?
     private let imageView = UIImageView()
@@ -660,6 +767,7 @@ final class PhotoCell: UICollectionViewCell {
     private let iconView = UIImageView()
     private let scoreLabel = UILabel()
     private let badgeLabel = UILabel()
+    private var selectionMode = false
     private var manager: PHImageManager?
     private var requestID: PHImageRequestID?
     private var requestedSide: CGFloat = 0
@@ -692,12 +800,16 @@ final class PhotoCell: UICollectionViewCell {
         imageView.frame = bounds
         dimView.frame = bounds
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        iconView.center = spinner.center
-        layoutCapsule(scoreLabel) { CGPoint(x: bounds.maxX - $0.width - 4, y: 4) }
+        iconView.center = selectionMode
+            ? CGPoint(x: bounds.maxX - iconView.bounds.width / 2 - 6,
+                      y: bounds.maxY - iconView.bounds.height / 2 - 6)
+            : spinner.center
+        layoutCapsule(scoreLabel) { _ in CGPoint(x: 4, y: 4) }
         layoutCapsule(badgeLabel) { CGPoint(x: 4, y: bounds.maxY - $0.height - 4) }
     }
 
     private func layoutCapsule(_ label: UILabel, origin: (CGSize) -> CGPoint) {
+        guard !label.isHidden else { return }
         let text = label.intrinsicContentSize
         let size = CGSize(width: text.width + 12, height: text.height + 4)
         label.frame = CGRect(origin: origin(size), size: size)
@@ -705,10 +817,15 @@ final class PhotoCell: UICollectionViewCell {
     }
 
     /// Everything drawn over the thumbnail: a tint, a spinner or a centered
-    /// symbol, the score capsule (top right) and a badge (bottom left).
+    /// symbol, the score capsule (top left) and a badge (bottom left).
     /// No arguments clears it.
     func setOverlay(tint: UIColor? = nil, spinning: Bool = false, icon: UIImage? = nil,
-                    score: Float? = nil, badge: String? = nil) {
+                    score: Float? = nil, badge: String? = nil, selectionMode: Bool = false) {
+        let next = Overlay(tint: tint, spinning: spinning, icon: icon, score: score,
+                           badge: badge, selectionMode: selectionMode)
+        guard overlay != next else { return }
+        overlay = next
+        self.selectionMode = selectionMode
         dimView.backgroundColor = tint
         dimView.isHidden = tint == nil
         if spinning { spinner.startAnimating() } else { spinner.stopAnimating() }
@@ -716,10 +833,38 @@ final class PhotoCell: UICollectionViewCell {
         iconView.isHidden = icon == nil
         iconView.sizeToFit()
         scoreLabel.text = score.map { String(format: "%.2f", $0) }
+        scoreLabel.accessibilityIdentifier = "similarityScore"
+        scoreLabel.accessibilityLabel = score.map { String(format: String(localized: "相似度 %.2f"), $0) }
         scoreLabel.isHidden = score == nil
         badgeLabel.text = badge
         badgeLabel.isHidden = badge == nil
         setNeedsLayout()
+    }
+
+    private struct AccessibilityState: Equatable {
+        let date: Date?
+        let favorite: Bool
+        let selecting: Bool
+        let textMatch: Bool
+        let original: Bool
+        let score: Float?
+    }
+    private var accessibilityState: AccessibilityState?
+
+    func setAccessibility(date: Date?, favorite: Bool, selecting: Bool, textMatch: Bool, original: Bool, score: Float?) {
+        let next = AccessibilityState(date: date, favorite: favorite, selecting: selecting,
+                                      textMatch: textMatch, original: original, score: score)
+        guard next != accessibilityState else { return }
+        accessibilityState = next
+        isAccessibilityElement = true
+        accessibilityLabel = date.map { String(localized: "照片，") + $0.formatted(date: .abbreviated, time: .shortened) } ?? String(localized: "照片")
+        accessibilityHint = selecting ? String(localized: "轻点切换选择状态") : String(localized: "轻点打开照片详情")
+        var details: [String] = []
+        if favorite { details.append(String(localized: "已收藏")) }
+        if textMatch { details.append(String(localized: "文字匹配")) }
+        if original { details.append(String(localized: "原图")) }
+        if let score { details.append(String(format: String(localized: "相似度 %.2f"), score)) }
+        accessibilityValue = details.joined(separator: ", ")
     }
 
     /// Requests the thumbnail. A repeat call for the same photo only re-requests
@@ -730,6 +875,7 @@ final class PhotoCell: UICollectionViewCell {
         cancelRequest()
         if !upgrade { imageView.image = nil }
         representedID = id
+        accessibilityIdentifier = "photoCell-\(id)"
         representedAsset = asset
         requestedSide = side
         guard let asset else { return }
@@ -748,6 +894,7 @@ final class PhotoCell: UICollectionViewCell {
         super.prepareForReuse()
         cancelRequest()
         representedID = nil
+        accessibilityIdentifier = nil
         representedAsset = nil
         requestedSide = 0
         imageView.image = nil

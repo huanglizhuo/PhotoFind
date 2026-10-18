@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "PhotoFind";
+"NSPhotoLibraryUsageDescription" = "PhotoFind needs access to your photos to create a search index on this device. All processing stays on your device. Photos are never uploaded.";

@@ -20,15 +20,15 @@ struct EvaluationView: View {
         List {
             Section {
                 HStack {
-                    TextField("新增查询,如\u{201C}海边日落\u{201D}", text: $newQuery)
+                    TextField(String(localized: "新增查询,如\u{201C}海边日落\u{201D}"), text: $newQuery)
                         .onSubmit(addQuery)
-                    Button("标注", action: addQuery)
+                    Button(String(localized: "标注"), action: addQuery)
                         .disabled(newQuery.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 ForEach(labels.items) { label in
                     Button { labeling = label.query } label: {
                         LabeledContent(label.query,
-                                       value: "有用 \(label.relevant.count) · 没用 \(label.irrelevant.count)")
+                                       value: String(localized: "有用 \(label.relevant.count) · 没用 \(label.irrelevant.count)"))
                     }
                     .foregroundStyle(.primary)
                 }
@@ -37,21 +37,21 @@ struct EvaluationView: View {
                     labels.save()
                 }
             } header: {
-                Text("评测集")
+                Text(String(localized: "评测集"))
             } footer: {
-                Text("在结果上标\u{201C}有用 / 没用\u{201D};只存本机,可导出给团队。")
+                Text(String(localized: "在结果上标\u{201C}有用 / 没用\u{201D};只存本机,可导出给团队。"))
             }
 
-            Section("指标") {
-                Button(running ? "运行中…" : "运行评测") { Task { await runReport() } }
+            Section(String(localized: "指标")) {
+                Button(running ? String(localized: "运行中…") : String(localized: "运行评测")) { Task { await runReport() } }
                     .disabled(running || labels.items.allSatisfy { $0.relevant.isEmpty })
                 if let report {
                     LabeledContent("Recall@10", value: String(format: "%.3f", report.recallAt10))
                     LabeledContent("MRR", value: String(format: "%.3f", report.mrr))
                     // T3: 临时, 供 G2 决策, T9 删除。
-                    LabeledContent("Recall@10(不含文字)", value: String(format: "%.3f", report.noTextRecallAt10))
-                    LabeledContent("MRR(不含文字)", value: String(format: "%.3f", report.noTextMRR))
-                    LabeledContent("搜索延迟 P50 / P95",
+                    LabeledContent(String(localized: "Recall@10(不含文字)"), value: String(format: "%.3f", report.noTextRecallAt10))
+                    LabeledContent(String(localized: "MRR(不含文字)"), value: String(format: "%.3f", report.noTextMRR))
+                    LabeledContent(String(localized: "搜索延迟 P50 / P95"),
                                    value: String(format: "%.0f / %.0f ms", report.latencyP50 * 1000, report.latencyP95 * 1000))
                     ForEach(report.queries, id: \.query) { item in
                         LabeledContent(item.query, value: String(format: "R@10 %.2f · RR %.2f", item.recallAt10, item.reciprocalRank))
@@ -60,52 +60,52 @@ struct EvaluationView: View {
                 }
                 let durations = model.pipeline.embedDurations
                 if durations.isEmpty {
-                    Text("本次启动尚未嵌入照片,没有单张耗时数据").font(.footnote).foregroundStyle(.secondary)
+                    Text(String(localized: "本次启动尚未嵌入照片,没有单张耗时数据")).font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    LabeledContent("单张嵌入 均值 / P50 / P95",
+                    LabeledContent(String(localized: "单张嵌入 均值 / P50 / P95"),
                                    value: String(format: "%.0f / %.0f / %.0f ms",
                                                  durations.reduce(0, +) / Double(durations.count) * 1000,
                                                  percentile(durations, 0.5) * 1000, percentile(durations, 0.95) * 1000))
                 }
                 // F8.3 (T3): counted since launch, updated when anything above runs.
                 if iCloudCounts.total > 0 {
-                    LabeledContent("iCloud 取图", value: "需要下载 \(iCloudCounts.needed) / 共 \(iCloudCounts.total) 张")
+                    LabeledContent(String(localized: "iCloud 取图"), value: String(localized: "需要下载 \(iCloudCounts.needed) / 共 \(iCloudCounts.total) 张"))
                 } else {
-                    Text("iCloud 取图:还没有取图数据").font(.footnote).foregroundStyle(.secondary)
+                    Text(String(localized: "iCloud 取图:还没有取图数据")).font(.footnote).foregroundStyle(.secondary)
                 }
             }
 
             Section {
-                Button(running ? "检查中…" : "检查 GPU / CPU 向量一致性") { Task { await runConsistency() } }
+                Button(running ? String(localized: "检查中…") : String(localized: "检查 GPU / CPU 向量一致性")) { Task { await runConsistency() } }
                     .disabled(running || model.photos.isEmpty)
                 if let consistency, !consistency.isEmpty {
-                    LabeledContent("样本", value: "\(consistency.count) 张")
-                    LabeledContent("余弦相似度 最小 / 均值",
+                    LabeledContent(String(localized: "样本"), value: String(localized: "\(consistency.count) 张"))
+                    LabeledContent(String(localized: "余弦相似度 最小 / 均值"),
                                    value: String(format: "%.4f / %.4f", consistency.min() ?? 0,
                                                  consistency.reduce(0, +) / Float(consistency.count)))
-                    Text((consistency.min() ?? 0) >= 0.99 ? "一致:后台回退 CPU 不影响排序" : "差异偏大:后台用 CPU 生成的向量可能影响排序")
+                    Text((consistency.min() ?? 0) >= 0.99 ? String(localized: "一致:后台回退 CPU 不影响排序") : String(localized: "差异偏大:后台用 CPU 生成的向量可能影响排序"))
                         .font(.footnote)
                         .foregroundStyle((consistency.min() ?? 0) >= 0.99 ? .green : .orange)
                 }
             } header: {
-                Text("后台回退")
+                Text(String(localized: "后台回退"))
             } footer: {
-                Text("用 CPU 重新计算已索引照片的向量,与索引中(前台 GPU 算出)的向量比较(F2.8)。")
+                Text(String(localized: "用 CPU 重新计算已索引照片的向量,与索引中(前台 GPU 算出)的向量比较(F2.8)。"))
             }
 
             Section {
-                Button("导出评测数据") { export = ExportFile(url: labels.export(report: report, consistency: consistency)) }
+                Button(String(localized: "导出评测数据")) { export = ExportFile(url: labels.export(report: report, consistency: consistency)) }
             }
         }
-        .navigationTitle("质量评测")
+        .navigationTitle(String(localized: "质量评测"))
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: Binding(get: { labeling.map(LabelTarget.init) }, set: { labeling = $0?.query })) { target in
             LabelingView(query: target.query, labels: $labels)
         }
         .sheet(item: $export) { ShareSheet(items: [$0.url]) }
         .onAppear { refreshICloudCounts() }
-        .alert("评测失败", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("好", role: .cancel) {}
+        .alert(String(localized: "评测失败"), isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button(String(localized: "好"), role: .cancel) {}
         } message: {
             Text(error ?? "")
         }
@@ -225,7 +225,7 @@ private struct LabelingView: View {
             .navigationTitle(query)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) { Button { dismiss() } label: { Label(String(localized: "关闭"), systemImage: "xmark") } }
             }
             .task {
                 do {
@@ -341,7 +341,7 @@ struct EvaluationLabels {
             let report: EvaluationReport?
             let gpuCPUCosine: [Float]?
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("一句找图-评测.json")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(String(localized: "一句找图-评测.json"))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

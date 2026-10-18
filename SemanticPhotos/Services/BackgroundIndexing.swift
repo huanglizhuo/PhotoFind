@@ -75,8 +75,8 @@ final class BackgroundIndexing {
     private func submitContinued(gpu: Bool) {
         wantsGPU = gpu
         let request = BGContinuedProcessingTaskRequest(identifier: Self.continuedID,
-                                                      title: "正在索引照片",
-                                                      subtitle: "准备中…")
+                                                      title: String(localized: "正在索引照片"),
+                                                      subtitle: String(localized: "准备中…"))
         request.strategy = .queue
         if gpu { request.requiredResources = .gpu }
         do {
@@ -114,7 +114,7 @@ final class BackgroundIndexing {
         progressTotal = total
         continuedTask.progress.totalUnitCount = Int64(max(total, 1))
         continuedTask.progress.completedUnitCount = Int64(min(done, total))
-        continuedTask.updateTitle("正在索引照片", subtitle: "\(done)/\(total)")
+        continuedTask.updateTitle(String(localized: "正在索引照片"), subtitle: "\(done)/\(total)")
     }
 
     /// The queue drained (or paused with nothing runnable).

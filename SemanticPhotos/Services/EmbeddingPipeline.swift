@@ -10,12 +10,13 @@ import UIKit
 final class EmbeddingPipeline {
     /// Why queued work isn't running, shown in the progress pill (F2.4).
     enum PauseReason: Hashable {
-        case lowPower, thermal
+        case lowPower
+        case user
 
         var text: String {
             switch self {
-            case .lowPower: return "低电量模式"
-            case .thermal: return "设备过热"
+            case .lowPower: return String(localized: "低电量模式")
+            case .user: return String(localized: "手动暂停")
             }
         }
     }
@@ -31,6 +32,12 @@ final class EmbeddingPipeline {
     /// Assets currently being embedded (grid badge, F3.4).
     private(set) var processingIDs: Set<String> = []
     private(set) var failedIDs: Set<String> = []
+    private(set) var failedTextIDs: Set<String> = []
+    var failureCount: Int { failedIDs.union(failedTextIDs).count }
+    var trackedIDs: Set<String> {
+        embedQueued.union(textQueued).union(processingIDs).union(failedIDs)
+            .union(failedTextIDs).union(cloudOnlyIDs).union(activeTextID.map { [$0] } ?? [])
+    }
     /// v0.8 / G3: photos that could not be embedded because they live only in
     /// iCloud and indexing is local-first. Not failures — the UI offers a
     /// one-tap "下载并索引" action.
@@ -61,16 +68,41 @@ final class EmbeddingPipeline {
     /// GPU inference competes with rendering and drops frames, so the grids call
     /// this on every scroll/zoom frame and the next photo waits until the UI
     /// has been still for a moment. The run stays alive (progress keeps showing).
-    func noteInteraction() {
-        lastInteraction = .now
+    func noteInteraction(quietPeriod: Duration = .milliseconds(400)) {
+        interactionUntil = max(interactionUntil, .now + quietPeriod)
     }
-    @ObservationIgnored private var lastInteraction = ContinuousClock.now
-    private var isInteracting: Bool { .now - lastInteraction < .milliseconds(400) }
+    @ObservationIgnored private var interactionUntil = ContinuousClock.now + .milliseconds(400)
+    // Startup can restore and reconcile queues without starting inference before the grid appears.
+    private var startupDeferred = false
+    func deferForStartup(_ deferred: Bool) {
+        startupDeferred = deferred
+        if !deferred { startIfNeeded() }
+    }
+
+    private var searchActive = false
+    func prioritizeSearch(_ active: Bool) {
+        searchActive = active
+        if !active { startIfNeeded() }
+    }
+
+    func waitForQuietUI() async throws {
+        while isInteracting {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try Task.checkCancellation()
+    }
+
+    private var isInteracting: Bool { .now < interactionUntil }
 
     private let store: EmbeddingStore
-    private let engine: EmbeddingEngine
-    private let photoServiceProvider: () -> PhotoLibraryService
-    private var photoService: PhotoLibraryService { photoServiceProvider() }
+    struct Operations {
+        var image: (String) async throws -> UIImage
+        var embed: (UIImage, Int) async throws -> [Float]
+        var info: (String) -> (modificationDate: Date?, meta: PhotoMeta)?
+        var text: (String) async throws -> String
+    }
+    private let operations: Operations
+    private var activeTextID: String?
 
     private var embedQueue: [String] = []
     private var embedQueued: Set<String> = []
@@ -93,13 +125,36 @@ final class EmbeddingPipeline {
     }
 
     var progressText: String {
-        phase == .embed ? "正在建立索引 \(embedDone)/\(embedTotal)" : "文字识别 \(textDone)/\(textTotal)"
+        phase == .embed ? String(localized: "正在建立索引 \(embedDone)/\(embedTotal)") : String(localized: "文字识别 \(textDone)/\(textTotal)")
     }
 
     init(store: EmbeddingStore, engine: EmbeddingEngine, photoServiceProvider: @escaping () -> PhotoLibraryService) {
         self.store = store
-        self.engine = engine
-        self.photoServiceProvider = photoServiceProvider
+        operations = Operations(
+            image: { try await photoServiceProvider().embeddingImage(for: $0) },
+            embed: { try await engine.embedImage($0, dimension: $1) },
+            info: { photoServiceProvider().indexInfo(for: $0) },
+            text: { id in
+                guard let image = await photoServiceProvider().textImage(for: id) else {
+                    throw EmbeddingImageError.imageUnavailable
+                }
+                return try await TextRecognizer.recognize(image)
+            })
+    }
+
+    init(store: EmbeddingStore, operations: Operations) {
+        self.store = store
+        self.operations = operations
+    }
+
+    func retryFailures() {
+        let embeds = Array(failedIDs)
+        let texts = Array(failedTextIDs.subtracting(failedIDs))
+        enqueue(embeds, excluding: [], dimension: dimension)
+        let freshText = texts.filter { !textQueued.contains($0) && activeTextID != $0 }
+        append(freshText, to: .recognizeText)
+        persist { try await $0.addPending(freshText, stage: .recognizeText) }
+        startIfNeeded()
     }
 
     /// Reloads the persisted queue at launch (F2.3) and backfills text work
@@ -155,11 +210,28 @@ final class EmbeddingPipeline {
 
     /// Photos deleted from the index leave the queue too.
     func forget(_ ids: Set<String>) {
+        embedTotal -= embedQueue.filter { ids.contains($0) }.count
+        textTotal -= textQueue.filter { ids.contains($0) }.count
         embedQueue.removeAll { ids.contains($0) }
         embedQueued.subtract(ids)
         textQueue.removeAll { ids.contains($0) }
         textQueued.subtract(ids)
+        processingIDs.subtract(ids)
+        if let activeTextID, ids.contains(activeTextID) { self.activeTextID = nil }
         cloudOnlyIDs.subtract(ids)
+        failedIDs.subtract(ids)
+        failedTextIDs.subtract(ids)
+        let removed = Array(ids)
+        persist { try await $0.delete(ids: removed) }
+    }
+
+    /// Caller holds startup deferral, so the current operation finishes before the index is reset.
+    func resetIndex() async throws {
+        while isRunning { try await Task.sleep(for: .milliseconds(50)) }
+        forget(trackedIDs)
+        await storeWrites?.value
+        try await store.clearAll()
+        resetCounters()
     }
 
     // MARK: - Run loop
@@ -197,7 +269,7 @@ final class EmbeddingPipeline {
     }
 
     private func startIfNeeded() {
-        guard runTask == nil, !isPaused, pendingCount > 0 else { return }
+        guard runTask == nil, !shouldStop, pendingCount > 0 else { return }
         embeddedThisRun = 0
         isRunning = true
         runTask = Task { [weak self] in
@@ -205,8 +277,8 @@ final class EmbeddingPipeline {
         }
     }
 
-    /// The queue only ever stops for system reasons (F2.5, T6): low power or heat.
-    private var shouldStop: Bool { isPaused }
+    /// Low Power Mode pauses queued indexing work (F2.5, T6).
+    private var shouldStop: Bool { isPaused || startupDeferred || searchActive }
 
     private func runLoop() async {
         while !shouldStop {
@@ -248,13 +320,14 @@ final class EmbeddingPipeline {
         let id = embedQueue.removeFirst()
         embedQueued.remove(id)
         processingIDs.insert(id)
+        defer { processingIDs.remove(id) }
 
         let result: Result<UIImage, EmbeddingImageError>
         if let prefetch, prefetchID == id {
             result = await prefetch.value
         } else {
             prefetch?.cancel()
-            result = await Self.loadEmbeddingImage(service: photoService, id: id)
+            result = await loadEmbeddingImage(id: id)
         }
         prefetch = nil
         prefetchID = nil
@@ -262,11 +335,11 @@ final class EmbeddingPipeline {
         // Two-stage pipeline: kick off decoding the next asset before inference.
         if let nextID = embedQueue.first, !shouldStop {
             prefetchID = nextID
-            let service = photoService
-            prefetch = Task { await Self.loadEmbeddingImage(service: service, id: nextID) }
+            prefetch = Task { await self.loadEmbeddingImage(id: nextID) }
         }
 
         await waitForStillUI()
+        guard processingIDs.contains(id) else { embedTotal -= 1; return }
         guard !shouldStop else {
             processingIDs.remove(id)
             // Paused: run this photo again on resume.
@@ -290,31 +363,47 @@ final class EmbeddingPipeline {
         }
         do {
             let start = ContinuousClock.now
-            let vector = try await engine.embedImage(image, dimension: dimension)
+            let vector = try await operations.embed(image, dimension)
             let elapsed = ContinuousClock.now - start
             embedDurations.append(Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
-            let info = photoService.indexInfo(for: id)
-            let meta = info?.meta ?? PhotoMeta()
+            guard processingIDs.contains(id) else { embedTotal -= 1; return }
+            guard let info = operations.info(id) else {
+                forget([id])
+                embedTotal -= 1
+                return
+            }
+            let meta = info.meta
             // v0.8: hash the same 512px decode used for embedding, so "find the
             // original" costs no extra image request.
             let perceptualHash = PerceptualHash.dHash(image)
+            await storeWrites?.value
+            guard processingIDs.contains(id) else { embedTotal -= 1; return }
             try await store.insert(id: id, vector: vector, modelVersion: modelVersion,
-                                   modificationDate: info?.modificationDate, meta: meta,
+                                   modificationDate: info.modificationDate, meta: meta,
                                    perceptualHash: perceptualHash)
+            guard processingIDs.contains(id) else {
+                // A removal may arrive while the database write is suspended.
+                await storeWrites?.value
+                try await store.delete(ids: [id])
+                embedTotal -= 1
+                return
+            }
             persist { try await $0.removePending(id, stage: .embed) }
+            failedIDs.remove(id)
             processingIDs.remove(id)
             cloudOnlyIDs.remove(id)
             embedDone += 1
             embeddedThisRun += 1
             currentThumbnail = image
-            onPhotoIndexed?(IndexedPhoto(id: id, modificationDate: info?.modificationDate, importedAt: Date(), meta: meta))
+            onPhotoIndexed?(IndexedPhoto(id: id, modificationDate: info.modificationDate, importedAt: Date(), meta: meta))
             if shouldRecognizeText(meta) {
                 append([id], to: .recognizeText)
                 persist { try await $0.addPending([id], stage: .recognizeText) }
             }
             reportProgress()
         } catch {
-            fail(id)
+            if processingIDs.contains(id) { fail(id) }
+            else { embedTotal -= 1 }
         }
     }
 
@@ -322,29 +411,35 @@ final class EmbeddingPipeline {
         phase = .recognizeText
         let id = textQueue.removeFirst()
         textQueued.remove(id)
+        activeTextID = id
+        defer { activeTextID = nil }
         await waitForStillUI()
+        guard activeTextID == id else { textTotal -= 1; return }
         guard !shouldStop else {
-            // Paused: run this photo again on resume.
             textQueue.insert(id, at: 0)
             textQueued.insert(id)
             return
         }
-        var text = ""
-        if let image = await photoService.textImage(for: id) {
-            text = (try? await TextRecognizer.recognize(image)) ?? ""
+        do {
+            let text = try await operations.text(id)
+            await storeWrites?.value
+            guard activeTextID == id else { textTotal -= 1; return }
+            try await store.setText(text, for: id)
+            guard activeTextID == id else { textTotal -= 1; return }
+            failedTextIDs.remove(id)
+            persist { try await $0.removePending(id, stage: .recognizeText) }
+        } catch {
+            guard activeTextID == id else { textTotal -= 1; return }
+            // Leave OCR NULL and persisted work intact so a retry/relaunch can recover.
+            failedTextIDs.insert(id)
         }
-        // An empty result still marks the photo done, so it isn't retried forever.
-        try? await store.setText(text, for: id)
-        persist { try await $0.removePending(id, stage: .recognizeText) }
         textDone += 1
         reportProgress()
     }
 
-    @MainActor
-    private static func loadEmbeddingImage(service: PhotoLibraryService,
-                                           id: String) async -> Result<UIImage, EmbeddingImageError> {
+    private func loadEmbeddingImage(id: String) async -> Result<UIImage, EmbeddingImageError> {
         do {
-            return .success(try await service.embeddingImage(for: id))
+            return .success(try await operations.image(id))
         } catch let error as EmbeddingImageError {
             return .failure(error)
         } catch {

@@ -1,0 +1,12 @@
+{
+  "assetPackID": "SemanticPhotosModel",
+  "downloadPolicy": {
+    "prefetch": {
+      "installationEventTypes": ["firstInstallation", "subsequentUpdate"]
+    }
+  },
+  "fileSelectors": [
+    { "file": "Model/embeddinggemma-2-text-vision-440m.litertlm" }
+  ],
+  "platforms": ["iOS"]
+}

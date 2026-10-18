@@ -2,17 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- F0.8: nothing is tracked or collected; everything stays on the device. -->
-	<key>NSPrivacyTracking</key>
-	<false/>
-	<key>NSPrivacyTrackingDomains</key>
-	<array/>
-	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>
-			<!-- Settings, grid columns, recent searches. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
@@ -20,6 +12,20 @@
 				<string>CA92.1</string>
 			</array>
 		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
 	</array>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
 </dict>
 </plist>

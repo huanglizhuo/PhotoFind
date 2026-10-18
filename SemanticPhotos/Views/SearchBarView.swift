@@ -4,12 +4,14 @@ import SwiftUI
 /// above it while it's focused and empty (F4.10).
 struct SearchBarView: View {
     @Environment(AppModel.self) private var model
-    @FocusState private var focused: Bool
+    @Binding var isFocused: Bool
+    var onFrameChange: (CGRect) -> Void
 
     var body: some View {
         @Bindable var model = model
+        let showsClose = isFocused || !model.searchText.isEmpty || model.searchResults != nil
         VStack(spacing: 10) {
-            if focused, model.searchText.isEmpty {
+            if isFocused, model.searchText.isEmpty {
                 SearchGuideView(onPick: pick)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -19,45 +21,69 @@ struct SearchBarView: View {
                     .foregroundStyle(.secondary)
 
                 // A search without typed text (相似照片) shows its title as the placeholder.
-                TextField(model.searchTitle ?? "描述你想找的照片…", text: $model.searchText)
-                    .focused($focused)
-                    .submitLabel(.search)
-                    .autocorrectionDisabled()
-                    .onSubmit { model.submitSearch() }
-                    .onChange(of: model.searchText) { _, _ in model.searchTextChanged() }
+                SearchTextField(text: $model.searchText, isFocused: $isFocused,
+                                placeholder: model.searchTitle ?? String(localized: "描述你想找的照片…"),
+                                onEdit: model.searchInputChanged,
+                                onSearch: model.searchTextChanged,
+                                onSubmit: model.submitSearch)
 
-                if model.isSearching {
-                    if model.isModelLoading {
-                        // F1.10: the model was unloaded while idle and is coming back.
-                        Text("模型加载中…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ProgressView()
-                } else if !model.searchText.isEmpty || model.searchResults != nil {
-                    Button {
-                        model.clearSearch()
-                        focused = false
+                if model.isSearching { ProgressView() }
+                if !model.searchText.isEmpty {
+                    Menu {
+                        Picker(String(localized: "时间范围"), selection: $model.searchFilter.period) {
+                            ForEach(SearchFilter.Period.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        Toggle(String(localized: "仅截图"), isOn: $model.searchFilter.screenshotsOnly)
+                        Toggle(String(localized: "仅收藏"), isOn: $model.searchFilter.favoritesOnly)
+                        if model.searchFilter.isActive {
+                            Button(String(localized: "清除筛选")) { model.searchFilter = SearchFilter() }
+                                .accessibilityIdentifier("clearSearchFilters")
+                        }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                        Image(systemName: model.searchFilter.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                            .frame(width: 44, height: 44)
                     }
-                    .buttonStyle(.plain)
+                    .accessibilityLabel(model.searchFilter.isActive ? String(localized: "搜索筛选，已启用") : String(localized: "搜索筛选"))
+                    .accessibilityIdentifier("searchFilters")
                 }
+                ZStack {
+                    if showsClose {
+                        Button {
+                            let hasText = !model.searchText.isEmpty
+                            model.clearSearch()
+                            if !hasText { isFocused = false }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("closeSearch")
+                        .accessibilityLabel(model.searchText.isEmpty ? String(localized: "关闭搜索") : String(localized: "清空搜索内容"))
+                        .transition(.identity)
+                    }
+                }
+                // Reserve its width so focusing doesn't resize the native input field.
+                .frame(width: 44, height: 44)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .frame(minHeight: 48)
             // The grid underneath is a UIKit view: SwiftUI only keeps a touch from it
             // where a gesture claims it, so the capsule's padding would open a photo.
             .contentShape(.capsule)
-            .onTapGesture { focused = true }
+            .onTapGesture { isFocused = true }
             .glassEffect(.regular.interactive(), in: .capsule)
         }
-        .animation(.easeOut(duration: 0.25), value: focused)
+        // History controls belong to the search panel, so clearing history keeps input open.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onFrameChange($0) }
+        .animation(.easeOut(duration: 0.25), value: isFocused)
+        .onDisappear { isFocused = false; model.cancelPendingSearchInput() }
+        .onChange(of: model.searchFilter) { _, _ in model.searchFiltersChanged() }
     }
 
     private func pick(_ query: String) {
-        focused = false
+        isFocused = false
         model.runSearch(query)
     }
 }
@@ -71,15 +97,16 @@ private struct SearchGuideView: View {
         VStack(alignment: .leading, spacing: 10) {
             if !model.recentSearches.isEmpty {
                 HStack {
-                    Text("最近搜索").font(.footnote.weight(.semibold))
+                    Text(String(localized: "最近搜索")).font(.footnote.weight(.semibold)).accessibilityIdentifier("searchGuidanceTitle")
                     Spacer()
-                    Button("清除") { model.clearRecentSearches() }
+                    Button(String(localized: "清除")) { model.clearRecentSearches() }
                         .font(.footnote)
                 }
                 ChipRow(items: model.recentSearches, systemImage: "clock.arrow.circlepath", onPick: onPick)
+            } else {
+                Text(String(localized: "试试搜索")).font(.footnote.weight(.semibold)).accessibilityIdentifier("searchGuidanceTitle")
+                ChipRow(items: Array(AppModel.exampleQueries.prefix(3)), systemImage: nil, onPick: onPick)
             }
-            Text("试试搜索").font(.footnote.weight(.semibold))
-            ChipRow(items: AppModel.exampleQueries, systemImage: nil, onPick: onPick)
         }
         .padding(14)
         .contentShape(.rect(cornerRadius: 22))

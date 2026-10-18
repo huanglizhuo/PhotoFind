@@ -122,7 +122,7 @@ final class PhotoLibraryService: NSObject {
 
     /// What the index stores next to a freshly embedded vector.
     func indexInfo(for id: String) -> (modificationDate: Date?, meta: PhotoMeta)? {
-        guard let asset = asset(for: id) else { return nil }
+        guard let asset = asset(for: id), !asset.isHidden else { return nil }
         var meta = baseMeta(for: asset)
         meta.locateCity()
         return (asset.modificationDate, meta)
@@ -143,7 +143,11 @@ final class PhotoLibraryService: NSObject {
 
     // MARK: - Images
 
-    func fullImage(for id: String, targetSize: CGSize) async -> UIImage? {
+    func fullImage(for id: String, targetSize: CGSize,
+                   progress: (@MainActor @Sendable (Double) -> Void)? = nil) async -> UIImage? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitestDetailImageUnavailable") { return nil }
+        #endif
         guard let asset = asset(for: id) else { return nil }
         let scale = UITraitCollection.current.displayScale
         return await requestImage(asset: asset,
@@ -151,7 +155,7 @@ final class PhotoLibraryService: NSObject {
                                                      height: targetSize.height * scale),
                                   deliveryMode: .highQualityFormat,
                                   allowNetwork: true,
-                                  contentMode: .aspectFit)
+                                  contentMode: .aspectFit, progress: progress)
     }
 
     /// Embedding input: 512px long edge (§2.1). Counted for F8.3: the options'
@@ -182,22 +186,40 @@ final class PhotoLibraryService: NSObject {
     /// one at a time and written to a fresh `tmp/share/<UUID>/` directory
     /// before the next asset is touched, so originals never accumulate in
     /// memory. Assets that can't be read are skipped.
-    func shareFiles(for ids: [String]) async -> [URL] {
-        let dir = Self.shareTempDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        } catch {
-            return []
-        }
+    struct ShareResult {
         var urls: [URL] = []
+        var failedIDs: [String] = []
+        let directory: URL
+    }
+
+    func shareFiles(for ids: [String], progress: (Int, Int) -> Void = { _, _ in }) async throws -> ShareResult {
+        let dir = Self.shareTempDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var result = ShareResult(directory: dir)
         var usedNames = Set<String>()
-        for id in ids {
-            guard let asset = asset(for: id),
-                  let url = await writeOriginalFile(asset, to: dir, avoiding: usedNames) else { continue }
-            usedNames.insert(url.lastPathComponent)
-            urls.append(url)
+        do {
+            for (index, id) in ids.enumerated() {
+                try Task.checkCancellation()
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-uitestShareReadFailure"), index == 0 {
+                    result.failedIDs.append(id)
+                    progress(index + 1, ids.count)
+                    continue
+                }
+                #endif
+                if let asset = asset(for: id),
+                   let url = await writeOriginalFile(asset, to: dir, avoiding: usedNames) {
+                    usedNames.insert(url.lastPathComponent)
+                    result.urls.append(url)
+                } else { result.failedIDs.append(id) }
+                try Task.checkCancellation()
+                progress(index + 1, ids.count)
+            }
+            return result
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
         }
-        return urls
     }
 
     /// F3.5.4 (T13): the share temp directory, one subdirectory per share.
@@ -220,28 +242,30 @@ final class PhotoLibraryService: NSObject {
         guard let (data, uti) = await currentImageData(asset) else { return nil }
         let url = dir.appendingPathComponent(shareFilename(asset, dataUTI: uti, avoiding: used))
         do {
-            try data.write(to: url, options: .atomic)
+            try await Self.writeShareData(data, to: url)
             return url
         } catch {
             return nil
         }
     }
 
+    @concurrent private static func writeShareData(_ data: Data, to url: URL) async throws {
+        try Task.checkCancellation()
+        try data.write(to: url, options: .atomic)
+    }
+
     private func currentImageData(_ asset: PHAsset) async -> (data: Data, uti: String?)? {
-        await withCheckedContinuation { continuation in
+        let request = PhotoRequest<(data: Data, uti: String?)>(manager: cachingManager)
+        return await request.value { finish in
             let options = PHImageRequestOptions()
             options.version = .current
             options.deliveryMode = .highQualityFormat
             options.isNetworkAccessAllowed = true
-            var resumed = false
-            cachingManager.requestImageDataAndOrientation(for: asset, options: options) { data, uti, _, info in
+            return cachingManager.requestImageDataAndOrientation(for: asset, options: options) { data, uti, _, info in
                 let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
                 let errored = info?[PHImageErrorKey] != nil
-                guard !resumed, !cancelled else { return }
-                if data != nil || errored {
-                    resumed = true
-                    continuation.resume(returning: data.map { ($0, uti) })
-                }
+                let result = cancelled || errored ? nil : data.map { (data: $0, uti: uti) }
+                Task { @MainActor in finish(result) }
             }
         }
     }
@@ -315,38 +339,87 @@ final class PhotoLibraryService: NSObject {
         }
     }
 
+    struct Album: Identifiable {
+        let id: String
+        let title: String
+    }
+
+    func editableAlbums() -> [Album] {
+        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+        var result: [Album] = []
+        albums.enumerateObjects { album, _, _ in
+            if album.canPerform(.addContent) {
+                result.append(Album(id: album.localIdentifier, title: album.localizedTitle ?? String(localized: "未命名相簿")))
+            }
+        }
+        return result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    func addPhotos(_ ids: [String], to albumID: String) async throws {
+        guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumID], options: nil).firstObject,
+              album.canPerform(.addContent) else { throw PhotoActionError.unavailable }
+        try await PHPhotoLibrary.shared().performChanges { @Sendable in
+            PHAssetCollectionChangeRequest(for: album)?.addAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
+        }
+    }
+
+    func setFavorite(_ favorite: Bool, for id: String) async throws {
+        guard let asset = asset(for: id), !asset.isHidden else { throw PhotoActionError.unavailable }
+        try await PHPhotoLibrary.shared().performChanges { @Sendable in
+            PHAssetChangeRequest(for: asset).isFavorite = favorite
+        }
+    }
+
+    func photoInformation(for id: String) -> [(String, String)] {
+        guard let asset = asset(for: id) else { return [] }
+        return [(String(localized: "文件名"), originalFilename(asset) ?? String(localized: "未知")),
+                (String(localized: "尺寸"), "\(asset.pixelWidth) × \(asset.pixelHeight)"),
+                (String(localized: "类型"), asset.mediaSubtypes.contains(.photoLive) ? String(localized: "实况照片（按静态图搜索和分享）") : String(localized: "照片"))]
+    }
+
+    func deletePhotos(ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await PHPhotoLibrary.shared().performChanges { @Sendable in
+            PHAssetChangeRequest.deleteAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
+        }
+    }
+
+    func localThumbnail(for id: String) async -> UIImage? {
+        guard let asset = asset(for: id), !asset.isHidden else { return nil }
+        return await scaledImage(asset, longEdge: 256, allowNetwork: false)
+    }
+
     // MARK: - Image request plumbing
 
     private func requestImage(asset: PHAsset, targetSize: CGSize,
                               deliveryMode: PHImageRequestOptionsDeliveryMode,
                               allowNetwork: Bool,
                               contentMode: PHImageContentMode,
-                              onCloudDownload: (@Sendable () -> Void)? = nil) async -> UIImage? {
-        await withCheckedContinuation { continuation in
+                              onCloudDownload: (@Sendable () -> Void)? = nil,
+                              progress: (@MainActor @Sendable (Double) -> Void)? = nil) async -> UIImage? {
+        let request = PhotoRequest<UIImage>(manager: cachingManager)
+        return await request.value { finish in
             let options = PHImageRequestOptions()
             options.deliveryMode = deliveryMode
             options.resizeMode = .fast
             options.isNetworkAccessAllowed = allowNetwork
             options.version = .current
-            // F8.3 (T3): PhotoKit only invokes this while fetching from iCloud;
-            // it never fires for locally available originals.
-            if let onCloudDownload {
-                options.progressHandler = { _, _, _, _ in onCloudDownload() }
+            options.progressHandler = { value, _, _, _ in
+                onCloudDownload?()
+                if let progress { Task { @MainActor in progress(value) } }
             }
-            var resumed = false
-            cachingManager.requestImage(for: asset, targetSize: targetSize,
-                                        contentMode: contentMode, options: options) { image, info in
+            return cachingManager.requestImage(for: asset, targetSize: targetSize,
+                                                contentMode: contentMode, options: options) { image, info in
                 let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
                 let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 let errored = info?[PHImageErrorKey] != nil
-                guard !resumed, !cancelled, !degraded else { return }
-                if image != nil || errored {
-                    resumed = true
-                    continuation.resume(returning: image)
-                }
+                guard cancelled || errored || !degraded else { return }
+                let result = cancelled || errored ? nil : image
+                Task { @MainActor in finish(result) }
             }
         }
     }
+
 }
 
 extension PhotoLibraryService: PHPhotoLibraryChangeObserver {
@@ -390,9 +463,9 @@ enum EmbeddingImageError: LocalizedError, Sendable {
     case icloudOnly
     var errorDescription: String? {
         switch self {
-        case .assetNotFound: return "照片不存在或不在已授权范围内"
-        case .imageUnavailable: return "无法读取照片(可能未从 iCloud 下载)"
-        case .icloudOnly: return "照片在 iCloud，尚未下载"
+        case .assetNotFound: return String(localized: "照片不存在或不在已授权范围内")
+        case .imageUnavailable: return String(localized: "无法读取照片(可能未从 iCloud 下载)")
+        case .icloudOnly: return String(localized: "照片在 iCloud，尚未下载")
         }
     }
 }
@@ -415,4 +488,45 @@ extension PhotoMeta {
         cityID = hit?.id
         cityKm = hit?.km
     }
+}
+
+/// Serializes PhotoKit completion and task cancellation; each request resumes exactly once.
+@MainActor final class PhotoRequest<Value: Sendable> {
+    private let manager: PHImageManager
+    private var requestID: PHImageRequestID?
+    private var continuation: CheckedContinuation<Value?, Never>?
+    private var finished = false
+
+    init(manager: PHImageManager) { self.manager = manager }
+
+    func value(start: (@escaping @MainActor @Sendable (Value?) -> Void) -> PHImageRequestID) async -> Value? {
+        await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return nil }
+            return await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                requestID = start { [weak self] in self?.finish($0) }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancel() }
+        }
+    }
+
+    private func finish(_ value: Value?) {
+        guard !finished else { return }
+        finished = true
+        requestID = nil
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
+
+    private func cancel() {
+        let id = requestID
+        finish(nil)
+        if let id { manager.cancelImageRequest(id) }
+    }
+}
+
+enum PhotoActionError: LocalizedError {
+    case unavailable
+    var errorDescription: String? { String(localized: "照片或相簿已不可访问，请检查相册访问权限后重试。") }
 }

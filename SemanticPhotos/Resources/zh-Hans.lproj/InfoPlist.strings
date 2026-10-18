@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "一句找图";
+"NSPhotoLibraryUsageDescription" = "一句找图需要访问您的照片，以在设备本地生成语义索引。所有处理均在本地完成，照片不会上传。";

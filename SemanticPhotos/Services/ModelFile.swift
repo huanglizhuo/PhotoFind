@@ -1,142 +1,85 @@
+import CryptoKit
 import Darwin
 import Foundation
-import os
 
-/// F1.11 (T2): the model ships inside the app bundle — no download, no runtime
-/// verification. `project.yml` lists the file as a required build input, so a
-/// missing model fails the build long before this unwrap could run.
-///
-/// The model itself is read-only on device, but LiteRT/MLDrift writes
-/// `*.mldrift_*_cache.bin` **next to the model path**. Pointing the embedder at
-/// the bundle therefore fails on device with "Operation not permitted" and
-/// silently falls back to CPU. `url` returns a writable CoW clone in Application Support
-/// (falling back to a hard link, a copy, or finally a symlink) so the GPU
-/// delegate can create its caches.
+/// Pin model bytes so an independent pack update cannot invalidate photo vectors.
 enum ModelFile {
-    /// The original file inside the app bundle; used for size checks/tests.
-    static let bundledURL: URL = Bundle.main.url(forResource: "embeddinggemma-2-text-vision-440m",
-                                                 withExtension: "litertlm")!
-
-    /// Identifies the index format (F4.6); bump together with the bundled file.
     static let version = "embeddinggemma-2-text-vision-440m"
-
-    private static let logger = Logger(subsystem: "com.clothpath.mondigital", category: "model")
-    private static let lock = NSLock()
-    // Protected by `lock`.
-    nonisolated(unsafe) private static var cachedWorkingURL: URL?
-
-    /// Writable model path for `UniversalEmbedder`. The MLDrift cache files
-    /// land in the same directory, which is why this cannot be the bundle.
-    static var url: URL {
-        lock.lock()
-        defer { lock.unlock() }
-        if let cachedWorkingURL { return cachedWorkingURL }
-
-        let fileManager = FileManager.default
-        let supportDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let modelDirectory = supportDirectory.appendingPathComponent("Model", isDirectory: true)
-        let destination = modelDirectory.appendingPathComponent(bundledURL.lastPathComponent)
-        let bundledSize = size(of: bundledURL)
-
-        do {
-            try fileManager.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
-            var excluded = URLResourceValues()
-            excluded.isExcludedFromBackup = true
-            var directory = modelDirectory
-            try? directory.setResourceValues(excluded)
-            let stamp = "\(version)-\(bundledSize)"
-            let stampURL = modelDirectory.appendingPathComponent("model.stamp")
-            let previousStamp = (try? String(contentsOf: stampURL, encoding: .utf8)) ?? ""
-            let destinationSize = size(of: destination)
-
-            if previousStamp != stamp || destinationSize != bundledSize {
-                if previousStamp != stamp {
-                    removeMLDriftCaches(in: modelDirectory)
-                }
-                try? fileManager.removeItem(at: destination)
-                if makeWritableCopy(from: bundledURL, to: destination) {
-                    try? stamp.write(to: stampURL, atomically: true, encoding: .utf8)
-                }
-            }
-        } catch {
-            logger.error("Could not prepare writable model directory: \(error.localizedDescription, privacy: .public)")
-        }
-
-        let working = fileManager.fileExists(atPath: destination.path) ? destination : bundledURL
-        if working == bundledURL {
-            logger.error("Model remains in the read-only bundle; MLDrift GPU caches will fail.")
-        }
-        cachedWorkingURL = working
-        return working
+    static let filename = "\(version).litertlm"
+    static let assetPackID = "SemanticPhotosModel"
+    static let expectedSize: Int64 = 387_710_976
+    static let sha256 = "92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0"
+    static var directory: URL {
+        URL.applicationSupportDirectory.appendingPathComponent("Model", isDirectory: true)
     }
 
-    /// Map a configured path to the writable model. `configureEngine` passes
-    /// the bundle path so launch stays cheap; the clone happens on the first
-    /// actual load (after photo access / first search).
-    static func writablePath(for path: String) -> String {
-        path == bundledURL.path ? url.path : path
+    enum ValidationError: LocalizedError {
+        case invalidModel
+        var errorDescription: String? { String(localized: "模型文件不完整或版本不兼容，请重试下载。") }
     }
 
-    /// First launch after upgrading to the bundled model (F1.11): remove what
-    /// the old downloader left in Application Support (~370 MB) and its keys.
-    static func removeLegacyDownloads() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("embeddinggemma-2-text-vision-440m.litertlm"))
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("model.resume"))
-        UserDefaults.standard.removeObject(forKey: "modelVerified")
+    /// Only fully verified, atomically published copies are reused offline.
+    static func localURL(in root: URL = directory) -> URL? {
+        let folder = root.appendingPathComponent(sha256, isDirectory: true)
+        let file = folder.appendingPathComponent(filename)
+        guard (try? String(contentsOf: folder.appendingPathComponent("verified"), encoding: .utf8)) == sha256,
+              size(of: file) == expectedSize else { return nil }
+        return file
     }
 
-    // MARK: - Writable copy
-
-    private static func makeWritableCopy(from source: URL, to destination: URL) -> Bool {
-        let fileManager = FileManager.default
-
-        // APFS copy-on-write clone: no extra storage until either file changes.
-        let cloneResult = source.path.withCString { sourcePath in
-            destination.path.withCString { destinationPath in
-                clonefile(sourcePath, destinationPath, 0)
-            }
+    /// LiteRT writes MLDrift caches beside this path, outside the managed pack.
+    static func prepare(from source: URL, in root: URL = directory) throws -> URL {
+        if let local = localURL(in: root) { return local }
+        let fm = FileManager.default
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        var root = root
+        try root.setResourceValues(excluded)
+        // A terminated preparation may leave a staging directory behind.
+        for file in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            where file.lastPathComponent.hasPrefix(".preparing-") {
+            try fm.removeItem(at: file)
         }
-        if cloneResult == 0 {
-            return true
+        let staging = root.appendingPathComponent(".preparing-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
+        let stagedModel = staging.appendingPathComponent(filename)
+        // APFS clone shares storage; copy also works across filesystem boundaries.
+        let cloned = source.path.withCString { src in
+            stagedModel.path.withCString { dst in clonefile(src, dst, 0) == 0 }
         }
-        let cloneError = String(cString: strerror(errno))
-        logger.notice("clonefile failed (\(cloneError, privacy: .public)); trying hard link")
-
-        // Hard link: same inode, sibling path in a writable directory.
-        do {
-            try fileManager.linkItem(at: source, to: destination)
-            return true
-        } catch {
-            logger.notice("hard link failed (\(error.localizedDescription, privacy: .public)); trying copy")
+        if !cloned { try fm.copyItem(at: source, to: stagedModel) }
+        try validate(stagedModel, size: expectedSize, sha256: sha256)
+        try sha256.write(to: staging.appendingPathComponent("verified"), atomically: true, encoding: .utf8)
+        let destination = root.appendingPathComponent(sha256, isDirectory: true)
+        if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+        try fm.moveItem(at: staging, to: destination)
+        // Remove legacy copies only after the replacement is verified and published.
+        for file in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            where file.lastPathComponent == filename || file.lastPathComponent == "model.stamp"
+                || (file.lastPathComponent.hasPrefix(filename)
+                    && (file.lastPathComponent.contains("mldrift") || file.lastPathComponent.contains("xnnpack"))) {
+            try? fm.removeItem(at: file)
         }
+        return destination.appendingPathComponent(filename)
+    }
 
-        // Last resort that still guarantees a writable path for MLDrift caches.
-        do {
-            try fileManager.copyItem(at: source, to: destination)
-            return true
-        } catch {
-            logger.error("copy failed (\(error.localizedDescription, privacy: .public)); trying symlink")
+    static func validate(_ url: URL, size expectedSize: Int64, sha256 expectedHash: String) throws {
+        guard size(of: url) == expectedSize else { throw ValidationError.invalidModel }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let bytes = try handle.read(upToCount: 1_048_576), !bytes.isEmpty {
+            try Task.checkCancellation()
+            hash.update(data: bytes)
         }
-
-        do {
-            try fileManager.createSymbolicLink(at: destination, withDestinationURL: source)
-            return true
-        } catch {
-            logger.error("symlink failed: \(error.localizedDescription, privacy: .public)")
-            return false
+        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == expectedHash else {
+            throw ValidationError.invalidModel
         }
     }
 
-    private static func removeMLDriftCaches(in directory: URL) {
-        let fileManager = FileManager.default
-        let contents = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        for url in contents where url.lastPathComponent.contains("mldrift") || url.lastPathComponent.contains("xnnpack_cache") {
-            try? fileManager.removeItem(at: url)
-        }
-    }
-
-    private static func size(of url: URL) -> Int64 {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+    private static func size(of url: URL) -> Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int64
     }
 }

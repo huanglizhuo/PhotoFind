@@ -14,7 +14,7 @@ enum TextRecognitionPolicy {
 /// Chinese is only available at the accurate level (fast is Latin-only).
 enum TextRecognizer {
     static func recognize(_ image: UIImage) async throws -> String {
-        guard let cgImage = image.cgImage else { return "" }
+        guard let cgImage = image.cgImage else { throw EmbeddingImageError.imageUnavailable }
         var request = RecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = [Locale.Language(identifier: "zh-Hans"), Locale.Language(identifier: "en-US")]

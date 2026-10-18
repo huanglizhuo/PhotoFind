@@ -6,11 +6,20 @@ struct ContentView: View {
     @State private var detailPhotoID: String?
     /// Multi-select mode (F4.11); nil when off.
     @State private var selection: Set<String>?
-    @State private var shareItems: ShareItems?
-    @State private var preparingShare = false
+    @State private var shareRequest: PhotoShareRequest?
     @State private var albumPrompt: AlbumPrompt?
     @State private var toast: String?
-    @State private var showCloudPrompt = false
+    @State private var searchFocused = false
+    @State private var searchInputRegion = SearchInputRegion()
+    @State private var showIndexingDetails = false
+    @State private var manageAccessAfterDismiss = false
+    @State private var pendingDeletion: [String]?
+    @State private var isDeleting = false
+
+    // Hit testing needs the latest frame, without invalidating the grid on every keyboard animation frame.
+    private final class SearchInputRegion {
+        var frame: CGRect = .zero
+    }
 
     private struct AlbumPrompt: Identifiable {
         let id = UUID()
@@ -19,19 +28,27 @@ struct ContentView: View {
     }
 
     private var showPill: Bool {
-        model.pipeline.hasWork
+        model.pipeline.hasWork || model.pipeline.failureCount > 0 || model.cloudOnlyCount > 0
+            || model.photoService.authorization == .limited
     }
 
     /// Photos the grid shows right now (results or the whole library).
     private var shownIDs: [String] {
-        model.searchResults?.map(\.id) ?? model.photos.map(\.id)
+        model.searchResults?.map(\.id) ?? model.library.ids
     }
 
     var body: some View {
         // F2.1 (T11): the onboarding page owns the screen until photo access
         // (Limited or Full) has been granted; nothing else may touch PhotoKit
         // before that.
-        if model.needsOnboarding {
+        if !model.isModelReady {
+            switch model.modelProvisioner.state {
+            case .checking, .ready:
+                AppStartupView(phase: model.startupPhase)
+            default:
+                ModelDownloadView()
+            }
+        } else if model.needsOnboarding {
             OnboardingView()
         } else {
             mainUI
@@ -42,9 +59,14 @@ struct ContentView: View {
     private var mainUI: some View {
         @Bindable var model = model
         NavigationStack {
-            ZStack(alignment: .bottom) {
-                PhotoGridView(selection: $selection, onOpen: { detailPhotoID = $0 })
-
+            PhotoGridView(selection: $selection, onOpen: { detailPhotoID = $0 })
+                .overlay {
+                    if searchFocused {
+                        Color.clear.contentShape(.rect)
+                            .onTapGesture { dismissSearchInput() }
+                    }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 12) {
                 VStack(spacing: 10) {
                     if let toast {
                         Text(toast)
@@ -54,10 +76,11 @@ struct ContentView: View {
                             .glassEffect(.regular, in: .capsule)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if let selection {
-                        selectionBar(selection)
-                    } else {
-                        if let results = model.searchResults, !results.isEmpty {
+                    if selection == nil {
+                        if model.searchError != nil || model.isSearching || model.isSearchPending
+                            || (searchFocused && (model.searchPreparation.state != .ready || model.pipeline.hasWork || model.searchFilter.isActive)) {
+                            searchStatus
+                        } else if let results = model.searchResults, !results.isEmpty {
                             // Search mode: one compact summary line replaces the
                             // indexing chrome, so the bottom stays calm.
                             if !model.isLowConfidence || model.showLowRelevance {
@@ -71,19 +94,14 @@ struct ContentView: View {
                                     loadMore: model.loadMoreResults)
                             }
                         } else {
-                            // F2.1 (T11): permanent row under Limited access.
-                            if model.photoService.authorization == .limited {
-                                limitedRow
-                            }
-                            if model.cloudOnlyCount > 0 {
-                                cloudRow
-                            }
-                            if showPill {
-                                ProgressPill()
+                            if model.startupPhase != .idle {
+                                StartupStatusView(phase: model.startupPhase)
+                            } else if showPill {
+                                ProgressPill { showIndexingDetails = true }
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
-                        SearchBarView()
+                        SearchBarView(isFocused: $searchFocused) { searchInputRegion.frame = $0 }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -92,27 +110,48 @@ struct ContentView: View {
                 .animation(.easeOut(duration: 0.3), value: toast)
                 .animation(.easeOut(duration: 0.25), value: selection == nil)
             }
-            .navigationTitle(selection.map { $0.isEmpty ? "选择照片" : "已选择 \($0.count) 张" } ?? "")
+            .navigationTitle(selection.map { $0.isEmpty ? String(localized: "选择照片") : String(localized: "已选择 \($0.count) 张") } ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
         }
+        // An always-active SwiftUI tap gesture would swallow UIKit photo selection.
+        .simultaneousGesture(SpatialTapGesture(coordinateSpace: .global).onEnded { tap in
+            if searchFocused, !searchInputRegion.frame.contains(tap.location) { dismissSearchInput() }
+        }, isEnabled: searchFocused)
+        .task { model.libraryDidAppear() }
         .sheet(isPresented: $showAbout) { NavigationStack { AboutView() } }
-        .sheet(item: $shareItems, onDismiss: PhotoLibraryService.removeShareFiles) { ShareSheet(items: $0.urls) }
-        .alert("从 iCloud 下载并索引？", isPresented: $showCloudPrompt) {
-            Button("下载并索引") {
-                model.downloadCloudPhotos()
-                show("已开始下载并索引，进度见上方")
+        .sheet(item: $shareRequest) { SharePreparationView(ids: $0.ids) }
+        .sheet(isPresented: $showIndexingDetails, onDismiss: {
+            if manageAccessAfterDismiss {
+                manageAccessAfterDismiss = false
+                model.photoService.presentLimitedLibraryPicker()
             }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("\(model.cloudOnlyCount) 张照片只存在 iCloud。下载可能消耗流量和时间；完成后即可搜索。分享原图不受影响。")
+        }) {
+            NavigationStack {
+                IndexingDetailsView {
+                    manageAccessAfterDismiss = true
+                    showIndexingDetails = false
+                }
+            }
         }
-        .alert("存为相簿", isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
-            TextField("相簿名称", text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
-            Button("存储") { saveAlbum() }
-            Button("取消", role: .cancel) { albumPrompt = nil }
+        .alert(String(localized: "存为相簿"), isPresented: Binding(get: { albumPrompt != nil }, set: { if !$0 { albumPrompt = nil } })) {
+            TextField(String(localized: "相簿名称"), text: Binding(get: { albumPrompt?.name ?? "" }, set: { albumPrompt?.name = $0 }))
+            Button(String(localized: "存储")) { saveAlbum() }
+            Button(String(localized: "取消"), role: .cancel) { albumPrompt = nil }
         } message: {
-            Text("在系统相册中新建相簿，包含 \(albumPrompt?.ids.count ?? 0) 张照片。")
+            Text(String(localized: "在系统相册中新建相簿，包含 \(albumPrompt?.ids.count ?? 0) 张照片。"))
+        }
+        .alert(String(localized: "删除 \(pendingDeletion?.count ?? 0) 张照片？"),
+               isPresented: Binding(get: { pendingDeletion != nil },
+                                    set: { if !$0 { pendingDeletion = nil } }),
+               presenting: pendingDeletion) { ids in
+            Button(String(localized: "删除照片"), role: .destructive) {
+                pendingDeletion = nil
+                deletePhotos(ids)
+            }
+            Button(String(localized: "取消"), role: .cancel) { pendingDeletion = nil }
+        } message: { _ in
+            Text(String(localized: "将删除你在当前列表中选择的 \(pendingDeletion?.count ?? 0) 张照片。这些照片将从系统照片图库删除，而不只是从搜索结果移除。"))
         }
         .fullScreenCover(isPresented: Binding(
             get: { detailPhotoID != nil },
@@ -122,9 +161,57 @@ struct ContentView: View {
                 DetailView(startID: detailPhotoID)
             }
         }
-        .onChange(of: model.searchError) { _, error in
-            if let error { show(error) }
+
+    }
+
+    private var searchStatus: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if case .failed(let error) = model.searchPreparation.state {
+                Text(String(localized: "智能搜索准备失败：\(error)")).font(.footnote)
+                Button(String(localized: "重新准备"), action: model.retrySearchPreparation)
+                    .accessibilityIdentifier("retrySearchPreparation")
+            } else if model.searchPreparation.state == .preparing {
+                Text(String(localized: "正在准备智能搜索，准备好后自动搜索"))
+                    .font(.footnote)
+                    .accessibilityIdentifier("searchCoverage")
+                Text(String(localized: "可以先输入关键词，也可以继续浏览照片。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let error = model.searchError {
+                Text(String(localized: "搜索未完成：\(error)")).font(.footnote)
+                HStack {
+                    Button(String(localized: "重试")) { model.searchTextChanged() }
+                    Spacer()
+                    Button(String(localized: "关闭提示"), action: model.dismissSearchError)
+                }
+            } else {
+                if model.isSearching || model.isSearchPending {
+                    Text(model.isSearching ? String(localized: "正在更新搜索结果…") : String(localized: "输入停顿后更新结果"))
+                        .font(.footnote)
+                        .accessibilityIdentifier("searchCoverage")
+                }
+                if model.pipeline.hasWork {
+                    Text(String(localized: "照片索引仍在进行，不影响搜索已完成的照片。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if model.searchResults != nil, model.isSearching || model.isSearchPending {
+                    Text(String(localized: "下方暂时保留上一次结果")).font(.caption).foregroundStyle(.secondary)
+                }
+                if model.searchFilter.isActive {
+                    Text([model.searchFilter.period.title,
+                          model.searchFilter.screenshotsOnly ? String(localized: "仅截图") : nil,
+                          model.searchFilter.favoritesOnly ? String(localized: "仅收藏") : nil].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func dismissSearchInput() {
+        model.cancelPendingSearchInput()
+        searchFocused = false
     }
 
     @ToolbarContentBuilder
@@ -132,73 +219,112 @@ struct ContentView: View {
         @Bindable var model = model
         if let selection {
             ToolbarItem(placement: .topBarLeading) {
-                Button(selection.count == shownIDs.count ? "全不选" : "全选") {
+                Button(selection.count == shownIDs.count ? String(localized: "全不选") : String(localized: "全选当前 \(shownIDs.count) 张")) {
                     self.selection = selection.count == shownIDs.count ? [] : Set(shownIDs)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("完成") { self.selection = nil }
+                Button { self.selection = nil } label: {
+                    Label(String(localized: "退出选择"), systemImage: "xmark")
+                }
+                .accessibilityIdentifier("exitSelection")
+                .disabled(isDeleting)
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                selectionActions(selection)
             }
         } else {
             ToolbarItemGroup(placement: .topBarLeading) {
                 if !shownIDs.isEmpty {
-                    Button("选择") { self.selection = [] }
+                    Button(String(localized: "选择")) { self.selection = [] }
+                        .disabled(model.isSearching || model.isSearchPending)
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink {
+                    ColorUniverseView()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "circle.hexagongrid.fill")
+                        Text(String(localized: "色彩")).font(.footnote)
+                    }
+                    .accessibilityLabel(String(localized: "色彩宇宙"))
+                }
+                .accessibilityIdentifier("openColorUniverse")
+                if showPill {
+                    Button { showIndexingDetails = true } label: {
+                        Label(String(localized: "照片整理"), systemImage: "photo.badge.checkmark")
+                    }
+                }
                 Button { showAbout = true } label: {
-                    Label("关于", systemImage: "info.circle")
+                    Label(String(localized: "关于"), systemImage: "info.circle")
                 }
             }
         }
     }
 
-    private func selectionBar(_ selection: Set<String>) -> some View {
+    private func selectionActions(_ selection: Set<String>) -> some View {
         let ids = shownIDs.filter(selection.contains)
-        return HStack(spacing: 12) {
+        return Group {
             Button {
                 share(ids)
             } label: {
-                Label(preparingShare ? "准备中…" : "分享", systemImage: "square.and.arrow.up")
+                Label(String(localized: "分享"), systemImage: "square.and.arrow.up")
             }
+            .labelStyle(.iconOnly)
+            .accessibilityIdentifier("shareSelection")
+            Spacer()
             Button {
-                albumPrompt = AlbumPrompt(name: "精选照片", ids: ids)
+                albumPrompt = AlbumPrompt(name: String(localized: "精选照片"), ids: ids)
             } label: {
-                Label("存为相簿", systemImage: "rectangle.stack.badge.plus")
+                Text(String(localized: "创建相簿"))
+            }
+            .accessibilityIdentifier("createSelectionAlbum")
+            Spacer()
+            Button {
+                pendingDeletion = ids
+            } label: {
+                Label(isDeleting ? String(localized: "正在删除…") : String(localized: "删除"), systemImage: "trash")
+            }
+            .labelStyle(.iconOnly)
+            .accessibilityIdentifier("deleteSelection")
+        }
+        .disabled(ids.isEmpty || isDeleting)
+    }
+
+    private func deletePhotos(_ ids: [String]) {
+        guard !ids.isEmpty, !isDeleting else { return }
+        isDeleting = true
+        Task {
+            defer { isDeleting = false }
+            do {
+                try await model.photoService.deletePhotos(ids: ids)
+                await model.validateIndexOnColdStart()
+                selection = nil
+                show(String(localized: "已删除所选照片"))
+            } catch {
+                show(String(localized: "照片未删除：\(error.localizedDescription)"))
             }
         }
-        .font(.footnote.weight(.medium))
-        .buttonStyle(.glass)
-        .disabled(ids.isEmpty)
-        .padding(8)
-        .contentShape(.capsule)
-        .onTapGesture {}  // gaps between buttons would reach the UIKit grid
-        .glassEffect(.regular, in: .capsule)
     }
 
     /// F3.5.4 (T13): originals are fetched to tmp one by one; iCloud
     /// downloads can take a moment, hence the "准备中…" state.
     private func share(_ ids: [String]) {
-        guard !preparingShare else { return }
-        preparingShare = true
-        Task {
-            let urls = await model.photoService.shareFiles(for: ids)
-            preparingShare = false
-            if !urls.isEmpty { shareItems = ShareItems(urls: urls) }
-        }
+        shareRequest = PhotoShareRequest(ids: ids)
     }
 
     private func saveAlbum() {
         guard let prompt = albumPrompt else { return }
         albumPrompt = nil
-        let name = prompt.name.trimmingCharacters(in: .whitespaces).isEmpty ? "精选照片" : prompt.name
+        let name = prompt.name.trimmingCharacters(in: .whitespaces).isEmpty ? String(localized: "精选照片") : prompt.name
         Task {
             do {
                 try await model.photoService.saveAlbum(named: name, ids: prompt.ids)
-                show("已存为相簿「\(name)」")
+                show(String(localized: "已存为相簿「\(name)」"))
                 if selection != nil { selection = [] }
             } catch {
-                show("存储失败：\(error.localizedDescription)")
+                show(String(localized: "存储失败：\(error.localizedDescription)"))
             }
         }
     }
@@ -209,53 +335,6 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(2.5))
             if toast == message { toast = nil }
         }
-    }
-
-    /// F2.1 (T11): "仅部分照片可搜 · 管理" sits above the search bar under
-    /// Limited access. The whole capsule is the button, so no tap reaches the
-    /// UIKit grid underneath.
-    private var limitedRow: some View {
-        Button {
-            model.photoService.presentLimitedLibraryPicker()
-        } label: {
-            HStack {
-                Text(model.libraryPhotoCount == 0 ? "还没有选择照片 · 选择照片" : "仅部分照片可搜 · 管理")
-                    .font(.footnote)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.footnote)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .foregroundStyle(.primary)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
-    }
-
-    /// v0.8 / G3: photos that local-first indexing skipped because they only
-    /// exist in iCloud. Explicit user consent before any download.
-    private var cloudRow: some View {
-        Button {
-            showCloudPrompt = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "icloud.and.arrow.down")
-                    .font(.footnote)
-                Text("\(model.cloudOnlyCount) 张照片在 iCloud · 下载并索引")
-                    .font(.footnote)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.footnote)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .foregroundStyle(.primary)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
     }
 }
 
@@ -275,9 +354,9 @@ private struct SearchSummaryBar: View {
             Text(summary)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             if hasMore {
-                Button("显示更多", action: loadMore)
+                Button(String(localized: "显示更多"), action: loadMore)
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.plain)
             }
@@ -291,10 +370,10 @@ private struct SearchSummaryBar: View {
 
     private var summary: String {
         var parts: [String] = []
-        if lowRelevance { parts.append("低相关") }
-        parts.append("找到 \(found) 张")
-        if shown < found { parts.append("已显示 \(shown) 张") }
-        if total > 0 { parts.append("已搜索 \(indexed)/\(total) 张") }
+        if lowRelevance { parts.append(String(localized: "低相关")) }
+        parts.append(found >= AppModel.maxRankedResults ? String(localized: "最相关的 \(found) 张") : String(localized: "候选 \(found) 张"))
+        if shown < found { parts.append(String(localized: "已显示 \(shown) 张")) }
+        if total > 0 { parts.append(String(localized: "可搜索 \(indexed)/\(total) 张")) }
         return parts.joined(separator: " · ")
     }
 }

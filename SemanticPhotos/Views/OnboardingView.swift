@@ -1,84 +1,76 @@
 import SwiftUI
 import UIKit
 
-/// First-launch page (F2.1, T11): one-line promise, three privacy points and
-/// a 开始 button that runs the system photo-permission prompt (the user picks
-/// Limited or Full). Access triggers full-library indexing right away
-/// (F2.8 / F7.2). After a denial the same page offers 去系统设置开启 instead —
-/// no repeated prompts. Replaces the old PrePermissionView / DeniedView /
-/// import picker.
+/// Explains photo access after the search resource is ready; PhotoKit asks only on tap.
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
     @State private var requesting = false
+    @State private var showMore = false
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: "photo.badge.shield.checkmark")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-            Text(AppInfo.displayName)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
-            // G1 (final copy) still depends on T5; this is the default promise.
-            Text("用一句话描述，就能找到相册里的那张照片")
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-            VStack(alignment: .leading, spacing: 14) {
-                point("iphone", "照片只在本地处理", "语义索引在这台设备上生成，照片不会上传。")
-                point("wifi.slash", "App 自身不联网", "地点名称来自内置离线数据库。iCloud 照片由系统按需下载；默认不会主动下载索引图。")
-                point("chart.bar.xaxis", "不收集任何数据", "没有统计和埋点，删除 App 即删除全部索引。")
-            }
-            .padding(.horizontal, 4)
-            Spacer()
-            if model.showsDeniedState {
-                // F2.1: denied/restricted — offer Settings, never re-prompt.
-                Text("您拒绝了照片访问。请在系统设置中允许 \(AppInfo.displayName) 访问照片，才能在本地建立索引。")
-                    .font(.footnote)
+        ScrollView {
+            VStack(spacing: 24) {
+                SetupSteps(current: 1)
+                MeerkatMascot(ready: true, animated: false)
+                    .frame(height: 120)
+                Text(String(localized: "选择想要搜索的照片"))
+                    .font(.title2.bold())
                     .multilineTextAlignment(.center)
+                Label(String(localized: "搜索资源已准备好，可离线使用"), systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Button {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                } label: {
-                    Text("去系统设置开启")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 16) {
+                    point("iphone", String(localized: "照片不上传"), String(localized: "照片只在这台设备上处理。"))
+                    point("wifi.slash", String(localized: "下载后可离线搜索"), String(localized: "无需联网就能搜索已整理的本地照片。"))
+                    point("photo.on.rectangle", String(localized: "只处理你授权的照片"), String(localized: "可以选择部分照片，也可以允许访问整个相册。"))
                 }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Button {
-                    requesting = true
-                    Task {
-                        await model.photoService.requestAccess()
-                        model.photoServiceAuthorized()
-                        if !model.needsOnboarding {
-                            // F2.8 / F7.2: indexing starts the moment access
-                            // arrives, newest photos first.
-                            model.indexUnindexed(userInitiated: true)
+                Button(String(localized: "了解更多")) { showMore = true }
+                    .font(.subheadline)
+                if model.showsDeniedState {
+                    Text(String(localized: "请在系统设置中允许访问照片，才能开始整理。"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button(String(localized: "去系统设置开启")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
                         }
-                        requesting = false
                     }
-                } label: {
-                    Text(requesting ? "请稍候…" : "开始")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button {
+                        requesting = true
+                        Task {
+                            await model.photoService.requestAccess()
+                            model.photoServiceAuthorized()
+                            if !model.needsOnboarding {
+                                model.indexUnindexed(userInitiated: true)
+                            }
+                            requesting = false
+                        }
+                    } label: {
+                        Text(requesting ? String(localized: "请稍候…") : String(localized: "选择照片并开始整理"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(requesting)
+                    .accessibilityIdentifier("startPhotoIndexing")
+                    Text(String(localized: "首次整理可能需要一些时间，手机可能发热。已有进度会保留，之后通常只更新新增或编辑的照片。"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(requesting)
-                Text("可以选择只授权部分照片。首次会为允许的照片建立索引，照片多时可能需要一段时间；可以随时退出，之后自动继续。只索引照片，不含视频。")
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
             }
+            .padding(24)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
         }
-        .padding(32)
+        .sheet(isPresented: $showMore) { NavigationStack { AboutView() } }
     }
 
     private func point(_ symbol: String, _ title: String, _ detail: String) -> some View {
         Label {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.headline)
                 Text(detail).font(.subheadline).foregroundStyle(.secondary)
             }

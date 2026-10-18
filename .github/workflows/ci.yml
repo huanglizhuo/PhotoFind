@@ -1,0 +1,32 @@
+name: iOS tests
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '*.md']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: photofind-mac
+  cancel-in-progress: false
+jobs:
+  test:
+    if: github.repository == 'huanglizhuo/PhotoFind' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, photofind]
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      PHOTO_FIND_SIMULATOR: ${{ vars.PHOTO_FIND_SIMULATOR }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: bash Tools/ci.sh test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: test-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/tests.log
+            build/test-build.log
+          retention-days: 14

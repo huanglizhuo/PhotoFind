@@ -1,0 +1,20 @@
+Third-party notices
+
+MediaPipe / LiteRT / TensorFlow components
+Copyright The MediaPipe, LiteRT and TensorFlow Authors.
+https://github.com/google-ai-edge/mediapipe
+https://github.com/google-ai-edge/LiteRT
+Licensed under Apache License 2.0. Upstream binaries are used without modification.
+
+EmbeddingGemma 2 text/vision 440M LiteRT model
+https://huggingface.co/litert-community/embeddinggemma-2-text-vision-440m-litert-lm
+Licensed under Apache License 2.0 as declared in the model repository.
+
+GeoNames geographical data
+https://www.geonames.org/
+Licensed under Creative Commons Attribution 4.0 International.
+https://creativecommons.org/licenses/by/4.0/
+The bundled city lookup database is derived from GeoNames and reduced for offline lookup.
+
+Apache License 2.0 is included in SemanticPhotos/Resources/ThirdPartyLicenses/Apache-2.0.txt.
+These notices do not grant a license to the app's original source code or artwork.

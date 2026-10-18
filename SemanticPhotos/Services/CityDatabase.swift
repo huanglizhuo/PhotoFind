@@ -16,10 +16,10 @@ final class CityDatabase: Sendable {
         let admin: String?
         let adminZH: String?
 
-        /// The app UI is Chinese: Chinese names where GeoNames has them.
-        var cityName: String { nameZH ?? name }
+        var usesChinese: Bool { Bundle.main.preferredLocalizations.first?.hasPrefix("zh") == true }
+        var cityName: String { usesChinese ? nameZH ?? name : name }
         var countryName: String {
-            Locale(identifier: "zh-Hans").localizedString(forRegionCode: country) ?? country
+            Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en").localizedString(forRegionCode: country) ?? country
         }
     }
 
@@ -83,10 +83,10 @@ final class CityDatabase: Sendable {
     func displayName(cityID: Int?, km: Double?) -> String? {
         guard let cityID, let km, km <= 100, let place = place(id: cityID) else { return nil }
         let city = place.cityName
-        var parts = [km > 30 ? city + "附近" : city]
+        var parts = [km > 30 ? String(localized: "\(city)附近") : city]
         // Skip the province when it only repeats the city (北京 / 北京市, 东京 / 东京都),
         // or when only an English name exists next to a Chinese city name.
-        if let admin = place.adminZH ?? (place.nameZH == nil ? place.admin : nil), !admin.isEmpty,
+        if let admin = (place.usesChinese ? place.adminZH ?? (place.nameZH == nil ? place.admin : nil) : place.admin), !admin.isEmpty,
            !admin.hasPrefix(city), !city.hasPrefix(admin) {
             parts.append(admin)
         }

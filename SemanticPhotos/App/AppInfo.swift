@@ -1,8 +1,8 @@
 import Foundation
 
-/// User-facing product identity. Internal target/bundle names stay
-/// `SemanticPhotos`; only the display name and copy use this (D1 working name,
-/// pending the App Store name/trademark check before release).
+/// Localized product identity and public support links.
 enum AppInfo {
-    static let displayName = "一句找图"
+    static let displayName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "PhotoFind"
+    static let privacyURL = URL(string: "https://huanglizhuo.github.io/PhotoFind/privacy/")!
+    static let supportURL = URL(string: "https://huanglizhuo.github.io/PhotoFind/support/")!
 }

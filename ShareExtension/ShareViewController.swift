@@ -14,7 +14,7 @@ final class ShareViewController: UIViewController {
     private static let appGroup = "group.com.clothpath.mondigital"
     private static let fileName = "shared-image"
     /// Duplicated from `AppInfo` (separate target).
-    private static let appName = "一句找图"
+    private static let appName = String(localized: "一句找图")
 
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
@@ -27,18 +27,18 @@ final class ShareViewController: UIViewController {
         icon.tintColor = .tintColor
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 44)
         titleLabel.font = .preferredFont(forTextStyle: .title3)
-        titleLabel.text = "正在发送…"
+        titleLabel.text = String(localized: "正在发送…")
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
         detailLabel.textAlignment = .center
 
-        openButton.configuration?.title = "打开\(Self.appName)"
+        openButton.configuration?.title = String(localized: "打开\(Self.appName)")
         openButton.isHidden = true
         openButton.addAction(UIAction { [weak self] _ in self?.openApp() }, for: .touchUpInside)
 
         var doneConfig = UIButton.Configuration.borderedProminent()
-        doneConfig.title = "完成"
+        doneConfig.title = String(localized: "完成")
         let done = UIButton(configuration: doneConfig, primaryAction: UIAction { [weak self] _ in
             self?.extensionContext?.completeRequest(returningItems: nil)
         })
@@ -61,16 +61,16 @@ final class ShareViewController: UIViewController {
         guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }),
               let inbox = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup)
         else {
-            show("无法读取这张图片", "请换一张图片再试。")
+            show(String(localized: "无法读取这张图片"), String(localized: "请换一张图片再试。"))
             return
         }
         do {
             let data = try await Self.downsampledImageData(from: provider)
             try data.write(to: inbox.appendingPathComponent(Self.fileName), options: .atomic)
-            show("已发送到 \(Self.appName)", "打开 \(Self.appName) 即可看到原图与相似照片。")
+            show(String(localized: "已发送到 \(Self.appName)"), String(localized: "打开 \(Self.appName) 即可看到原图与相似照片。"))
             openButton.isHidden = false
         } catch {
-            show("无法读取这张图片", error.localizedDescription)
+            show(String(localized: "无法读取这张图片"), error.localizedDescription)
         }
     }
 
@@ -81,7 +81,7 @@ final class ShareViewController: UIViewController {
         extensionContext?.open(url) { [weak self] opened in
             guard !opened else { return }
             Task { @MainActor in
-                self?.show("已发送", "请回到主屏打开 \(Self.appName) 查看结果。")
+                self?.show(String(localized: "已发送"), String(localized: "请回到主屏打开 \(Self.appName) 查看结果。"))
             }
         }
     }

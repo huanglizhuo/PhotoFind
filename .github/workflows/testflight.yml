@@ -1,0 +1,37 @@
+name: Publish TestFlight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: photofind-mac
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'huanglizhuo/PhotoFind' && github.ref == 'refs/heads/main'
+    environment: testflight
+    runs-on: [self-hosted, macOS, ARM64, photofind]
+    timeout-minutes: 75
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      PHOTO_FIND_SIMULATOR: ${{ vars.PHOTO_FIND_SIMULATOR }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: bash Tools/ci.sh release
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: release-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/tests.log
+            build/test-build.log
+            build/archive.log
+            build/export.log
+            build/release-result.txt
+          retention-days: 14

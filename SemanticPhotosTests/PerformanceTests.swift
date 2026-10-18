@@ -6,6 +6,42 @@ import UIKit
 
 /// Release simulator benchmarks; fixtures never touch the app's photo index.
 final class PerformanceTests: XCTestCase {
+    /// Run alone against a prepared device: UIKit's keyboard cache is process-wide.
+    @MainActor
+    func testFirstSearchFocusResponsiveness() async throws {
+        func field(in view: UIView) -> UITextField? {
+            if let field = view as? UITextField, field.accessibilityIdentifier == "searchTextField" { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        var input: UITextField?
+        let deadline = ContinuousClock.now + .seconds(20)
+        while input == nil, ContinuousClock.now < deadline {
+            input = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).compactMap { field(in: $0) }.first
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        let textField = try XCTUnwrap(input, "Requires downloaded model and authorized photo library")
+        defer { textField.resignFirstResponder() }
+        let coordinator = try XCTUnwrap(textField.delegate as? SearchTextField.Coordinator)
+        try await Task.sleep(for: .milliseconds(350))
+        let started = CACurrentMediaTime()
+        // Use the capsule's binding path, including SwiftUI's updateUIView pass.
+        coordinator.parent.isFocused = true
+        var focusDuration: Double?
+        var previous = started
+        var maximumGap = 0.0
+        while CACurrentMediaTime() - started < 1.5 {
+            try await Task.sleep(for: .milliseconds(16))
+            let now = CACurrentMediaTime()
+            if focusDuration == nil, textField.isFirstResponder { focusDuration = now - started }
+            maximumGap = max(maximumGap, now - previous)
+            previous = now
+        }
+        XCTAssertTrue(textField.isFirstResponder, "Focus must survive startup and keyboard layout")
+        report("first_focus_request_to_responder", [try XCTUnwrap(focusDuration) * 1_000])
+        report("first_focus_main_actor_gap", [maximumGap * 1_000])
+    }
+
     private func report(_ name: String, _ samples: [Double]) {
         let sorted = samples.sorted()
         print("BENCH \(name) n=\(samples.count) median_ms=\(sorted[sorted.count / 2]) max_ms=\(sorted.last!) samples_ms=\(samples)")
@@ -15,6 +51,50 @@ final class PerformanceTests: XCTestCase {
         let start = CACurrentMediaTime()
         try body()
         return (CACurrentMediaTime() - start) * 1_000
+    }
+
+    func testColorRingLookupScaling() {
+        let photos = (0..<100_000).map { index in
+            ColoredPhoto(id: "color-\(index)", modified: nil,
+                         color: PhotoColor(hue: Double(index % 360) / 360, saturation: 0.8, brightness: 0.8))
+        }
+        let lookup = HueLookup(photos)
+        var oldTimes: [Double] = [], cachedTimes: [Double] = []
+        for index in 0..<24 {
+            let hue = Double(index) / 24
+            var old: ColoredPhoto?, cached: ColoredPhoto?
+            oldTimes.append(timed { old = ColoredPhoto.nearest(to: hue, in: photos) })
+            cachedTimes.append(timed { cached = lookup.nearest(to: hue) })
+            XCTAssertEqual(old?.id, cached?.id)
+        }
+        report("color_lookup_100000_linear", oldTimes)
+        report("color_lookup_100000_cached", cachedTimes)
+    }
+
+    func testMetadataUpdateScaling() {
+        let photos = (0..<100_000).map { index in
+            IndexedPhoto(id: "p\(index)", modificationDate: nil, importedAt: Date(timeIntervalSince1970: Double(100_000 - index)))
+        }
+        var favorite = PhotoMeta()
+        favorite.isFavorite = true
+        let changes = [(id: "p50000", meta: favorite)]
+        let original = IndexedLibrary(photos)
+        var oldTimes: [Double] = [], newTimes: [Double] = []
+        for _ in 0..<7 {
+            var old = original, updated = original
+            oldTimes.append(timed {
+                var revised = old.photos
+                let updates = Dictionary(uniqueKeysWithValues: changes.map { ($0.id, $0.meta) })
+                for index in revised.indices { if let meta = updates[revised[index].id] { revised[index].meta = meta } }
+                revised.sort { $0.sortDate > $1.sortDate }
+                old = IndexedLibrary(revised)
+            })
+            newTimes.append(timed { updated.updateMetadata(changes) })
+            XCTAssertEqual(old.photos, updated.photos)
+            XCTAssertEqual(old.ids, updated.ids)
+        }
+        report("metadata_100000_baseline", oldTimes)
+        report("metadata_100000_incremental", newTimes)
     }
 
     func testSearchScaling() async throws {
@@ -190,7 +270,10 @@ final class PerformanceTests: XCTestCase {
     func testEmbeddingInference() async throws {
         // Reuse the app's engine so the host's launch warm-up cannot create a second model.
         let engine = AppModel.shared.engine
-        engine.configure(modelPath: ModelFile.url.path)
+        guard let modelURL = ModelFile.localURL() else {
+            throw XCTSkip("需要先下载并校验模型后再测推理性能")
+        }
+        engine.configure(modelPath: modelURL.path)
         var loads: [Double] = []
         for _ in 0..<3 {
             await engine.unload()
@@ -240,6 +323,33 @@ final class PerformanceTests: XCTestCase {
                 if iteration > 0 { samples.append(ms) }
             }
             report("grid_state_ids_dates_\(count)", samples)
+            let library = IndexedLibrary(photos)
+            var cachedSamples: [Double] = []
+            for _ in 0..<8 {
+                var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
+                                      processing: [], failed: [], isSearch: false,
+                                      lowRelevanceStart: nil, selection: nil, dates: [:])
+                let ms = timed { state.ids = library.ids; state.dates = library.dates }
+                XCTAssertEqual(state.ids, photos.map(\.id))
+                XCTAssertEqual(state.dates.count, count)
+                cachedSamples.append(ms)
+            }
+            report("grid_state_cached_\(count)", cachedSamples)
+            let resultIDs = Array(library.ids.suffix(240))
+            for cached in [false, true] {
+                var mapping: [Double] = []
+                for _ in 0..<8 {
+                    var result: [IndexedPhoto] = []
+                    let ms = timed {
+                        let byID = cached ? library.byID : Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+                        result = resultIDs.compactMap { byID[$0] }
+                    }
+                    XCTAssertEqual(result.map(\.id), resultIDs)
+                    mapping.append(ms)
+                }
+                report("result_mapping_\(count)_\(cached ? "cached" : "rebuild")", mapping)
+            }
+
         }
     }
 

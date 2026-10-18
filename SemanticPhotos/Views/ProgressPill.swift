@@ -1,74 +1,124 @@
 import SwiftUI
 
-/// Global floating progress capsule above the search bar (F0.2 / F2.4, T6).
-/// Display-only: "正在建立索引 1,234/9,876 · 约 40 分钟", plus the pause reason
-/// while system conditions hold the queue. It is not a button, but it must
-/// still swallow taps so they don't reach the UIKit grid
-/// (testTapsOnFloatingChromeDontOpenPhotos).
+/// One compact status surface; recovery actions and explanations live in its sheet.
 struct ProgressPill: View {
     @Environment(AppModel.self) private var model
+    let openDetails: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            if let thumbnail = model.pipeline.currentThumbnail, model.pipeline.isRunning {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 28, height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.footnote.weight(.medium))
-                    .lineLimit(1)
-                if let progressValue {
-                    ProgressView(value: progressValue)
-                        .frame(maxWidth: 160)
+        Button(action: openDetails) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(String(localized: "已可搜索 \(model.photos.count) 张"))
+                        .font(.footnote.weight(.semibold))
+                    Spacer(minLength: 8)
+                    Image(systemName: "info.circle")
+                }
+                Text(status)
+                    .font(.footnote)
+                if model.pipeline.hasWork {
+                    Text(String(localized: "首次整理可能发热，之后通常只更新新增或编辑的照片。"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(.rect(cornerRadius: 20))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .contentShape(.capsule)  // not a button, but no tap reaches the UIKit grid
-        .onTapGesture {}
-        .glassEffect(.regular, in: .capsule)
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
+        .accessibilityIdentifier("indexingStatusCard")
+        .accessibilityHint(String(localized: "查看进度、索引说明和需要处理的项目"))
     }
 
-    private var pipeline: EmbeddingPipeline { model.pipeline }
+    private var status: String {
+        let pipeline = model.pipeline
+        if pipeline.isPaused && pipeline.hasWork {
+            return pipeline.pauseReasons.contains(.user) ? String(localized: "已手动暂停 · 查看并继续") : String(localized: "已暂停：低电量模式 · 关闭后继续")
+        }
+        if pipeline.hasWork { return pipeline.progressText }
+        if pipeline.failureCount > 0 { return String(localized: "有 \(pipeline.failureCount) 张未完成 · 查看并重试") }
+        if model.cloudOnlyCount > 0 { return String(localized: "\(model.cloudOnlyCount) 张在 iCloud · 查看下载选项") }
+        return String(localized: "仅搜索已授权的照片 · 管理访问权限")
+    }
+}
 
-    private var title: String {
-        // F2.4: say why queued work isn't moving, and how to resume it.
-        if pipeline.isPaused, let reason = pipeline.pauseReasons.first, !pipeline.isRunning {
-            switch reason {
-            case .lowPower: return "已暂停：低电量模式 · 充电后继续"
-            case .thermal: return "已暂停：设备过热 · 降温后继续"
+struct IndexingDetailsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmCloudDownload = false
+    let managePhotoAccess: () -> Void
+
+    var body: some View {
+        List {
+            Section(String(localized: "整理进度")) {
+                LabeledContent(String(localized: "已可搜索"), value: String(localized: "\(model.photos.count) 张"))
+                if model.pipeline.hasWork {
+                    Text(model.pipeline.progressText)
+                    if model.pipeline.isPaused {
+                        Label(model.pipeline.pauseReasons.contains(.user) ? String(localized: "已手动暂停，已完成的进度会保留") : String(localized: "已暂停：关闭低电量模式后继续"), systemImage: "pause.circle")
+                    } else {
+                        let pipeline = model.pipeline
+                        let done = pipeline.embedDone + pipeline.textDone
+                        let total = pipeline.embedTotal + pipeline.textTotal
+                        ProgressView(value: Double(done), total: Double(max(total, 1)))
+                            .accessibilityLabel(String(localized: "照片整理进度"))
+                        if let seconds = pipeline.estimatedSecondsRemaining {
+                            Text(String(localized: "照片索引预计还需约 \(max(1, Int((seconds / 60).rounded()))) 分钟；文字识别另需时间。"))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Text(model.pipeline.failureCount > 0 ? String(localized: "本轮整理已结束，部分照片需要重试。") : String(localized: "当前没有待处理任务。"))
+                }
+            }
+            if model.pipeline.hasWork || model.pipeline.pauseReasons.contains(.user) {
+                Section {
+                    Button(model.pipeline.pauseReasons.contains(.user) ? String(localized: "继续整理") : String(localized: "暂停整理")) {
+                        model.toggleIndexingPause()
+                    }
+                    .accessibilityIdentifier("toggleIndexingPause")
+                } footer: {
+                    Text(String(localized: "暂停会在当前照片处理结束后生效。继续时若仍处于低电量模式，会等待低电量模式关闭。"))
+                }
+            }
+            if model.pipeline.failureCount > 0 {
+                Section(String(localized: "需要重试")) {
+                    Text(String(localized: "\(model.pipeline.failureCount) 张照片的画面或文字尚未处理完成，已成功的结果会保留。"))
+                    Button(String(localized: "重试未完成的照片")) { model.pipeline.retryFailures() }
+                        .accessibilityIdentifier("retryIndexing")
+                }
+            }
+            if model.cloudOnlyCount > 0 {
+                Section(String(localized: "iCloud 照片")) {
+                    Text(String(localized: "\(model.cloudOnlyCount) 张照片需要先从 iCloud 下载。"))
+                    Button(String(localized: "下载并索引")) { confirmCloudDownload = true }
+                }
+            }
+            if model.photoService.authorization == .limited {
+                Section(String(localized: "相册访问")) {
+                    Text(String(localized: "当前只会搜索你授权的照片。"))
+                    Button(String(localized: "管理可访问的照片"), action: managePhotoAccess)
+                }
+            }
+            Section(String(localized: "关于首次整理")) {
+                Text(String(localized: "索引时手机可能发热、耗电增加。首次完成后，通常只处理新加入或编辑过的照片，已完成的进度会保留。"))
+                Text(String(localized: "已有索引的照片可以立即搜索。可以离开 App，稍后返回继续；后台运行时间由系统安排。"))
+                Text(String(localized: "照片只在本机处理，不会上传。更换搜索模型或重新安装 App 时，可能需要重新建立索引。"))
             }
         }
-        var text = pipeline.progressText
-        if model.photos.count > 0 {
-            // v0.8: lead with what is already searchable, not the backlog.
-            text = "已可搜索 \(model.photos.count) 张 · " + text
+        .navigationTitle(String(localized: "照片整理"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button { dismiss() } label: { Label(String(localized: "关闭"), systemImage: "xmark") }.accessibilityIdentifier("closeIndexingDetails") } }
+        .alert(String(localized: "从 iCloud 下载并索引？"), isPresented: $confirmCloudDownload) {
+            Button(String(localized: "下载并索引")) { model.downloadCloudPhotos() }
+            Button(String(localized: "取消"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "下载可能消耗流量和时间；完成后即可搜索。分享原图不受影响。"))
         }
-        if pipeline.phase == .embed, let eta = etaText {
-            text += " · \(eta)"
-        }
-        return text
-    }
-
-    /// Estimated time left from this session's pace (F2.4).
-    private var etaText: String? {
-        guard let seconds = pipeline.estimatedSecondsRemaining else { return nil }
-        if seconds < 60 { return "约 \(Int(seconds)) 秒" }
-        if seconds < 3600 { return "约 \(Int((seconds / 60).rounded())) 分钟" }
-        return String(format: "约 %d 小时 %02d 分", Int(seconds) / 3600, Int(seconds) % 3600 / 60)
-    }
-
-    private var progressValue: Double? {
-        if pipeline.isPaused && !pipeline.isRunning { return nil }
-        let (done, total) = pipeline.phase == .embed
-            ? (pipeline.embedDone, pipeline.embedTotal)
-            : (pipeline.textDone, pipeline.textTotal)
-        return total > 0 ? Double(done) / Double(total) : 0
     }
 }

@@ -45,6 +45,12 @@ actor EmbeddingStore {
     // Only OCR text is cached; vectors are still released after each search.
     private var normalizedTextCache: [String: String] = [:]
 
+    /// Convert database rows on the store actor before publishing the library on the main actor.
+    func indexedLibrary() throws -> IndexedLibrary {
+        try IndexedLibrary(metaRows().map { IndexedPhoto(id: $0.id, modificationDate: $0.modificationDate,
+                                         importedAt: $0.importedAt, meta: $0.meta) })
+    }
+
     func clearSearchTextCache() {
         normalizedTextCache.removeAll()
     }
@@ -54,7 +60,7 @@ actor EmbeddingStore {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("index.sqlite").path
         guard sqlite3_open(path, &db) == SQLITE_OK else {
-            openError = "无法打开索引数据库"
+            openError = String(localized: "无法打开索引数据库")
             return
         }
         let schema = """
@@ -99,6 +105,7 @@ actor EmbeddingStore {
         // v0.8: 64-bit dHash for "find the original" (stored as a signed
         // INTEGER; converted back with bitPattern).
         ("perceptual_hash", "INTEGER"),
+        ("color_hue", "REAL"), ("color_saturation", "REAL"), ("color_brightness", "REAL"),
     ]
 
     private static func addMissingColumns(_ db: OpaquePointer?) {
@@ -132,7 +139,8 @@ actor EmbeddingStore {
             asset_mod_date = excluded.asset_mod_date, taken_at = excluded.taken_at,
             favorite = excluded.favorite, kinds = excluded.kinds, lat = excluded.lat, lon = excluded.lon,
             city_id = excluded.city_id, city_km = excluded.city_km,
-            perceptual_hash = excluded.perceptual_hash, ocr_text = NULL;
+            perceptual_hash = excluded.perceptual_hash, ocr_text = NULL,
+            color_hue = NULL, color_saturation = NULL, color_brightness = NULL;
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -208,6 +216,39 @@ actor EmbeddingStore {
 
     // MARK: - Work queue (F2.3)
 
+    func colorRows() throws -> [ColoredPhoto] {
+        let stmt = try prepare("SELECT asset_id, asset_mod_date, color_hue, color_saturation, color_brightness FROM embeddings WHERE color_hue IS NOT NULL AND color_saturation IS NOT NULL AND color_brightness IS NOT NULL;")
+        defer { sqlite3_finalize(stmt) }
+        var rows: [ColoredPhoto] = []
+        var status = sqlite3_step(stmt)
+        while status == SQLITE_ROW {
+            let color = PhotoColor(hue: sqlite3_column_double(stmt, 2), saturation: sqlite3_column_double(stmt, 3),
+                                   brightness: sqlite3_column_double(stmt, 4))
+            if color.isValid {
+                rows.append(ColoredPhoto(id: String(cString: sqlite3_column_text(stmt, 0)),
+                    modified: double(stmt, 1).map(Date.init(timeIntervalSince1970:)), color: color))
+            }
+            status = sqlite3_step(stmt)
+        }
+        guard status == SQLITE_DONE else { throw storeError() }
+        return rows
+    }
+
+    /// A concurrent edit/re-index must never receive a color from the old photo version.
+    @discardableResult
+    func setColor(_ color: PhotoColor, for id: String, modificationDate: Date?) throws -> Bool {
+        guard color.isValid else { return false }
+        let stmt = try prepare("UPDATE embeddings SET color_hue = ?, color_saturation = ?, color_brightness = ? WHERE asset_id = ? AND asset_mod_date IS ?;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, color.hue)
+        sqlite3_bind_double(stmt, 2, color.saturation)
+        sqlite3_bind_double(stmt, 3, color.brightness)
+        bindText(id, at: 4, in: stmt)
+        bind(modificationDate?.timeIntervalSince1970, at: 5, in: stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw storeError() }
+        return sqlite3_changes(db) == 1
+    }
+
     /// Appends in order; ids already queued for the stage keep their place.
     func addPending(_ ids: [String], stage: Stage) throws {
         guard !ids.isEmpty else { return }
@@ -275,9 +316,16 @@ actor EmbeddingStore {
         return rows
     }
 
-    func searchRows(includeText: Bool = true) throws -> [SearchRow] {
+    func searchRows(includeText: Bool = true, filter: SearchFilter = SearchFilter()) throws -> [SearchRow] {
         try Task.checkCancellation()
-        let stmt = try prepare("SELECT asset_id, embedding, \(includeText ? "ocr_text" : "NULL") FROM embeddings;")
+        var conditions: [String] = []
+        if filter.screenshotsOnly { conditions.append("(kinds & 1) != 0") }
+        if filter.favoritesOnly { conditions.append("favorite = 1") }
+        let start = filter.lowerBound()
+        if start != nil { conditions.append("COALESCE(taken_at, created_at) >= ?") }
+        let predicate = conditions.isEmpty ? "" : " WHERE " + conditions.joined(separator: " AND ")
+        let stmt = try prepare("SELECT asset_id, embedding, \(includeText ? "ocr_text" : "NULL") FROM embeddings\(predicate);")
+        if let start { sqlite3_bind_double(stmt, 1, start.timeIntervalSince1970) }
         defer { sqlite3_finalize(stmt) }
         var rows: [SearchRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -429,7 +477,7 @@ actor EmbeddingStore {
     }
 
     private nonisolated static func errorMessage(for db: OpaquePointer?) -> String {
-        db.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "未知数据库错误"
+        db.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? String(localized: "未知数据库错误")
     }
 
     private func storeError() -> EmbeddingStoreError {
@@ -441,7 +489,7 @@ enum EmbeddingStoreError: LocalizedError {
     case sqlite(String)
     var errorDescription: String? {
         switch self {
-        case .sqlite(let message): return "索引数据库错误:\(message)"
+        case .sqlite(let message): return String(localized: "索引数据库错误:\(message)")
         }
     }
 }
