@@ -1,6 +1,6 @@
 # PhotoFind · 一句找图
 
-[![SLOC](https://api.octocounts.com/badge/huanglizhuo/PhotoFind?type=code)](https://octocounts.com/github/huanglizhuo/PhotoFind)
+[![SLOC: code, files, lines, and comments](https://api.octocounts.com/badge/huanglizhuo/PhotoFind)](https://octocounts.com/github/huanglizhuo/PhotoFind)
 
 <img src="docs/assets/app-icon.png" alt="PhotoFind app icon" width="120" />
 
