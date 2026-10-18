@@ -1,5 +1,7 @@
 # PhotoFind · 一句找图
 
+[![SLOC](https://api.octocounts.com/badge/huanglizhuo/PhotoFind?type=code)](https://octocounts.com/github/huanglizhuo/PhotoFind)
+
 <img src="docs/assets/app-icon.png" alt="PhotoFind app icon" width="120" />
 
 Find the photo you have in mind. PhotoFind is an iPhone app that searches your library with words, a reference image, or color. Photo analysis and search run on-device.
