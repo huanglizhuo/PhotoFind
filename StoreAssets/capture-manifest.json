@@ -1,0 +1,55 @@
+{
+  "capturedAt": "2026-10-18",
+  "device": "iPhone 17 Pro Max simulator",
+  "os": "iOS 26.5",
+  "udid": "B792AE90-0417-4A05-94E2-35F3C176D597",
+  "source": "Actual app UI with 54 licensed sample photos imported and genuinely indexed, plus 6 simulator stock photos. No fabricated search results. Debug simulator app from current working tree, not TestFlight build 4.",
+  "photoSources": "photo-sources.json",
+  "design": "Isolated screenshots keep every feature and its controls complete when viewed individually; no split captions or cross-screen device crops. Skill template export retained.",
+  "locales": [
+    "zh-Hans",
+    "en-US"
+  ],
+  "rawScreenshots": [
+    {
+      "file": "raw/en-US/01-search.png",
+      "sha256": "cbed0f1c2ee020bb16a03e9d0dac78c6bc1316e8bd7e829ea60165ae34e8da53"
+    },
+    {
+      "file": "raw/en-US/02-color.png",
+      "sha256": "f1019f693e838d1a40fb3f6d5c9e79f6d22e9fe133508f48e1d8f47cc98dbda0"
+    },
+    {
+      "file": "raw/en-US/03-organize.png",
+      "sha256": "6999ce22ef76739c93e4de071641fde9453c96bd8d6e3ce44583f91911ef61a9"
+    },
+    {
+      "file": "raw/en-US/04-dark.png",
+      "sha256": "4af1259030bff4b961735317b9cabac5d81e522cd559bfc37e7d7495b65202cd"
+    },
+    {
+      "file": "raw/en-US/05-privacy.png",
+      "sha256": "b0231e5dcf1f3e536506add3b6eceb32f1204c808619c022d7c383cb702b7d97"
+    },
+    {
+      "file": "raw/zh-Hans/01-search.png",
+      "sha256": "88faf85ec900b22db8fa66dd9a50ac11aa1684eea5ac5ae53044bccf8c6e2e72"
+    },
+    {
+      "file": "raw/zh-Hans/02-color.png",
+      "sha256": "5241b90df6101b44720dd7c0028b33e6d979cebe8d2c6390135671f1890a8d38"
+    },
+    {
+      "file": "raw/zh-Hans/03-organize.png",
+      "sha256": "8fcd5563006521cebcd330494d16c7ae22067c8a1dbcfe89b0461fa86d2b0acf"
+    },
+    {
+      "file": "raw/zh-Hans/04-dark.png",
+      "sha256": "2f993a309a1a71066d5a52e49514ad2ab8673d6cf9606c2f8c3335c737a7b104"
+    },
+    {
+      "file": "raw/zh-Hans/05-privacy.png",
+      "sha256": "642826fa1bb2869937d0c42db12c87ee577a93de78f0e9055ccbfd787da3d6c8"
+    }
+  ]
+}

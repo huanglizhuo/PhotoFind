@@ -194,6 +194,23 @@ final class SemanticPhotosUITests: XCTestCase {
     }
 
 
+    func testSearchShowsAllRankedCandidatesWithoutShowMore() throws {
+        try pauseIndexingForUITest()
+        search("颜色")
+        let lowResults = app.buttons.matching(NSPredicate(format: "label CONTAINS '张低相关结果'")).firstMatch
+        let summary = app.staticTexts.matching(NSPredicate(format: "label CONTAINS '最相关的 240 张'")).firstMatch
+        if lowResults.waitForExistence(timeout: 15) { lowResults.tap() }
+        XCTAssertTrue(summary.waitForExistence(timeout: 30), "Requires the prepared 406-photo acceptance library")
+        XCTAssertFalse(app.buttons["显示更多"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '已显示 60 张'")).firstMatch.exists)
+        app.buttons["选择"].tap()
+        app.buttons["全选当前 240 张"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["已选择 240 张"].waitForExistence(timeout: 5))
+        app.buttons["exitSelection"].tap()
+        grid.swipeUp()
+        XCTAssertTrue(grid.cells.allElementsBoundByIndex.contains { $0.isHittable })
+    }
+
     // MARK: - Grid (F3)
 
     func testPinchChangesColumnsAndKeepsWorking() throws {

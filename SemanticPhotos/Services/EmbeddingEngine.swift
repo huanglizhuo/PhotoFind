@@ -50,6 +50,14 @@ actor EmbeddingEngine {
         return try withFallback { try Self.extract(result: $0.embed(text: text), dimension: dimension) }
     }
 
+    func embedTextForSearch(_ text: String, dimension: Int) throws -> TextSearchScheduler.Embedding {
+        try Task.checkCancellation()
+        _ = try load()
+        let started = ContinuousClock.now
+        let result = Result { try embedText(text, dimension: dimension) }
+        return TextSearchScheduler.Embedding(result: result, started: started, duration: started.duration(to: .now))
+    }
+
     func embedImage(_ image: UIImage, dimension: Int) throws -> [Float] {
         try Task.checkCancellation()
         let mpImage = try MPImage(uiImage: image)

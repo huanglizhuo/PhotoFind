@@ -22,7 +22,9 @@ The vendored MediaPipe package pins binary download URLs and SHA-256 checksums. 
 
 - The model downloads before photo authorization and indexing.
 - Search accepts input while the model prepares, then searches the latest committed input.
-- Chinese IME composition does not run searches; committed text uses a 500 ms debounce.
+- IME composition does not run searches in any language; confirmed text uses a 500 ms debounce. Automatic inference starts at least 1.2 seconds apart, or three times the mean of the last five inference durations when slower.
+- Search keeps one running task and only the latest waiting request, caches 20 query vectors, and defers inference/result replacement until 150 ms after scrolling stops. Clearing, dismissing or backgrounding cancels pending publication.
+- All ranked search candidates (up to 240 for text search) are available without a Show More button; thumbnails still load on demand. Low-relevance results retain their separate confirmation.
 - First indexing can warm the phone. Later passes usually process only new or edited photos.
 - iCloud-only photos are not proactively downloaded for indexing without the user's choice.
 - Screenshots support text recognition. Videos are excluded; Live Photos use the still image.

@@ -20,13 +20,15 @@ struct SearchInputTests {
         var searches: [String] = []
         var submits: [String] = []
         var edits = 0
+        var cancellations = 0
 
         func coordinator() -> SearchTextField.Coordinator {
             SearchTextField(text: Binding(get: { self.text }, set: { self.text = $0 }),
                             isFocused: Binding(get: { self.focused }, set: { self.focused = $0 }),
                             placeholder: "搜索", onEdit: { self.edits += 1 },
                             onSearch: { self.searches.append(self.text) },
-                            onSubmit: { self.submits.append(self.text) }).makeCoordinator()
+                            onSubmit: { self.submits.append(self.text) },
+                            onCancel: { self.cancellations += 1 }).makeCoordinator()
         }
     }
 
@@ -172,6 +174,8 @@ struct SearchInputTests {
         _ = coordinator.textFieldShouldReturn(field)
         #expect(input.submits == ["生日蛋糕"])
         #expect(!input.focused)
+        coordinator.textFieldDidEndEditing(field)
+        #expect(input.cancellations == 0)
         try await Task.sleep(for: .milliseconds(750))
         #expect(input.searches.isEmpty)
     }
@@ -191,7 +195,7 @@ struct SearchInputTests {
         #expect(input.searches == [""])
     }
 
-    @Test func endingEditingPublishesFinalCompositionAfterViewUpdate() async throws {
+    @Test func endingEditingKeepsFinalCompositionWithoutStartingSearch() async throws {
         let input = Input(), field = UITextField()
         let coordinator = input.coordinator()
         field.setMarkedText("朋友", selectedRange: NSRange(location: 2, length: 0))
@@ -201,6 +205,52 @@ struct SearchInputTests {
         coordinator.textFieldDidEndEditing(field)
         coordinator.updating = false
         try await Task.sleep(for: .milliseconds(750))
-        #expect(input.searches == ["朋友"])
+        #expect(input.text == "朋友")
+        #expect(input.searches.isEmpty)
+        #expect(input.cancellations == 1)
     }
+    @Test(arguments: ["猫", "sunset", "夕焼け", "바다", "شاطئ", "café"])
+    func allLanguagesSearchAfterConfirmedInput(_ query: String) async throws {
+        let input = Input(), field = UITextField()
+        let coordinator = input.coordinator()
+        field.text = query
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(input.searches.isEmpty)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(input.searches == [query])
+    }
+
+    @Test func deletingPartOfAQueryAlsoDebounces() async throws {
+        let input = Input(), field = UITextField()
+        let coordinator = input.coordinator()
+        field.text = "海边日落"
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(700))
+        field.text = "海边日"
+        coordinator.textChanged(field)
+        field.text = "海边"
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(input.searches == ["海边日落", "海边"])
+    }
+
+    @Test func equivalentWhitespaceDoesNotRestartDebounceOrRepeatSearch() async throws {
+        let input = Input(), field = UITextField()
+        let coordinator = input.coordinator()
+        field.text = "海边"
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(300))
+        field.text = " 海边 "
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(input.searches.count == 1)
+        #expect(input.edits == 1)
+        field.text = "海边  "
+        coordinator.textChanged(field)
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(input.searches.count == 1)
+        #expect(input.edits == 1)
+    }
+
 }

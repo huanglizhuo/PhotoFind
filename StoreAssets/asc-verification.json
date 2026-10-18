@@ -1,0 +1,584 @@
+{
+  "version": {
+    "affordances": {
+      "checkReadiness": "asc versions check-readiness --version-id 5e582d28-c15e-40ba-9912-baab4f47bd66",
+      "getReviewDetail": "asc version-review-detail get --version-id 5e582d28-c15e-40ba-9912-baab4f47bd66",
+      "listLocalizations": "asc version-localizations list --version-id 5e582d28-c15e-40ba-9912-baab4f47bd66",
+      "listVersions": "asc versions list --app-id 6823997811",
+      "submitForReview": "asc versions submit --version-id 5e582d28-c15e-40ba-9912-baab4f47bd66",
+      "updateVersion": "asc versions update --version-id 5e582d28-c15e-40ba-9912-baab4f47bd66"
+    },
+    "appId": "6823997811",
+    "copyright": "© 2026 Huang Lizhuo",
+    "id": "5e582d28-c15e-40ba-9912-baab4f47bd66",
+    "platform": "IOS",
+    "releaseType": "MANUAL",
+    "state": "PREPARE_FOR_SUBMISSION",
+    "versionString": "1.0"
+  },
+  "screenshots": [
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id b310308b-0c02-4393-8f2e-1033ea94d6f4"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "01-hero.png",
+      "fileSize": 3354244,
+      "id": "043f7ae3-4e3b-4b15-806f-dfb98f0341af",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/_5_bMUBaqG8plUl0r48EFA/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id b310308b-0c02-4393-8f2e-1033ea94d6f4"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "02-device-bottom.png",
+      "fileSize": 3174322,
+      "id": "19c00019-6bdf-8173-800f-a81ef54f107e",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/SX4IFUEHX8DOaXDBl36_9A/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id b310308b-0c02-4393-8f2e-1033ea94d6f4"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "03-hero.png",
+      "fileSize": 3357342,
+      "id": "7f800019-6bdf-8173-8019-85516ec608d5",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/m08OlV8jPy0WmuUV9t2w7w/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id b310308b-0c02-4393-8f2e-1033ea94d6f4"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "04-device-top.png",
+      "fileSize": 3353887,
+      "id": "09000019-6bdf-8173-8039-ae1a94b62513",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/aGj8VMeqo1cH-QjtE3cBZQ/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id b310308b-0c02-4393-8f2e-1033ea94d6f4"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "05-device-bottom.png",
+      "fileSize": 960843,
+      "id": "86000019-6bdf-8173-8030-ac646cc79c78",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/itOdmrd2Botrl9u5BPBN6g/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 7be0717e-559a-4511-9eff-681f9a2d145f"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "01-hero.png",
+      "fileSize": 3447751,
+      "id": "3a800019-6bdf-8173-8023-2eb487915fd6",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/zpKwg_bPg24rqtm70sfhxw/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 7be0717e-559a-4511-9eff-681f9a2d145f"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "02-device-bottom.png",
+      "fileSize": 3185582,
+      "id": "33c00019-6bdf-8173-803a-d3194768460a",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/pBcMqGNh4hxK-rQwmA1TaA/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 7be0717e-559a-4511-9eff-681f9a2d145f"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "03-hero.png",
+      "fileSize": 3409819,
+      "id": "c8c00019-6bdf-8173-8034-00f8ef12663e",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/xVcmgqt7giw6Kww8cGjhOg/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 7be0717e-559a-4511-9eff-681f9a2d145f"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "04-device-top.png",
+      "fileSize": 3559200,
+      "id": "7a400019-6bdf-8173-802f-6dc46cb37072",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/SWlnzURsyJLIX9vB6B6w_g/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 7be0717e-559a-4511-9eff-681f9a2d145f"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "05-device-bottom.png",
+      "fileSize": 1005828,
+      "id": "4d400019-6bdf-8173-8027-e76d47b7799c",
+      "imageHeight": 2868,
+      "imageWidth": 1320,
+      "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/5_UygyElb03QFxKjOzjmuw/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 49626ed6-7859-45e2-ae0e-9124387f1b89"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "01-hero.png",
+      "fileSize": 2893139,
+      "id": "f0c00019-6bdf-8173-8006-0ce7a2d00d6a",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/4sQxwaaKMYSpv0Z0Zn5iww/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 49626ed6-7859-45e2-ae0e-9124387f1b89"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "02-device-bottom.png",
+      "fileSize": 2712737,
+      "id": "cb000019-6bdf-8173-803d-98af170b01a7",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/m6S0ZJzLgYQJDbtUQ8s9YQ/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 49626ed6-7859-45e2-ae0e-9124387f1b89"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "03-hero.png",
+      "fileSize": 2896093,
+      "id": "75000019-6bdf-8173-8002-c3798d2826c8",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/CWvA5ayGylgVlv-4-bzk-Q/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 49626ed6-7859-45e2-ae0e-9124387f1b89"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "04-device-top.png",
+      "fileSize": 2894318,
+      "id": "d6800019-6bdf-8173-8012-a73a836bb4df",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/lchsuLm7PnhiD6jRbWYfxg/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 49626ed6-7859-45e2-ae0e-9124387f1b89"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "05-device-bottom.png",
+      "fileSize": 843351,
+      "id": "fa400019-6bdf-8173-8005-fedca2a96486",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/K0q9u3UmAtO_mYzKGxJ1Nw/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 1d8ddd54-c6cc-4853-bb98-52ab29205884"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "01-hero.png",
+      "fileSize": 2976344,
+      "id": "ef400019-6bdf-8173-800c-c5df5f930227",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/KYomNulc-Ic4aVdAkmjULg/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 1d8ddd54-c6cc-4853-bb98-52ab29205884"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "02-device-bottom.png",
+      "fileSize": 2722589,
+      "id": "c8400019-6bdf-8173-8026-6a795539d194",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/ULTUK3aZPI9XHF6S6FGheA/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 1d8ddd54-c6cc-4853-bb98-52ab29205884"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "03-hero.png",
+      "fileSize": 2940068,
+      "id": "1f000019-6bdf-8173-8007-3614408171cb",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/av7g5WvpXfzEhlPGyfxtGQ/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 1d8ddd54-c6cc-4853-bb98-52ab29205884"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "04-device-top.png",
+      "fileSize": 3066030,
+      "id": "8f800019-6bdf-8173-801e-1e956b27e27a",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/Kf6Rdmr0hzm_cweuABJYkA/{w}x{h}bb.{f}"
+    },
+    {
+      "affordances": {
+        "listScreenshots": "asc screenshots list --set-id 1d8ddd54-c6cc-4853-bb98-52ab29205884"
+      },
+      "assetState": "COMPLETE",
+      "fileName": "05-device-bottom.png",
+      "fileSize": 882680,
+      "id": "75800019-6bdf-8173-802c-48544275bab7",
+      "imageHeight": 2622,
+      "imageWidth": 1206,
+      "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+      "sourceUrl": "https://is1-ssl.mzstatic.com/image/thumb/UYMeiQOd7LEamhPESHSGBg/{w}x{h}bb.{f}"
+    }
+  ],
+  "placements": [
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id f0c00019-6bdf-8173-8006-0ce7a2d00d6a",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "f0c00019-6bdf-8173-8006-0ce7a2d00d6a",
+      "id": "18000019-6bdf-8173-8f3f-eb1ed5d59ce3",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 1,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id cb000019-6bdf-8173-803d-98af170b01a7",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "cb000019-6bdf-8173-803d-98af170b01a7",
+      "id": "a0800019-6bdf-8173-8f05-48d9776ce9fb",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 2,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 75000019-6bdf-8173-8002-c3798d2826c8",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "75000019-6bdf-8173-8002-c3798d2826c8",
+      "id": "3e400019-6bdf-8173-8f20-cd171eaf9ff3",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 3,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id d6800019-6bdf-8173-8012-a73a836bb4df",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "d6800019-6bdf-8173-8012-a73a836bb4df",
+      "id": "f0400019-6bdf-8173-8f19-3083f28f51a6",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 4,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id fa400019-6bdf-8173-8005-fedca2a96486",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "fa400019-6bdf-8173-8005-fedca2a96486",
+      "id": "15000019-6bdf-8173-8f24-d4fa6f5714a8",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 5,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id b0800019-6bdf-8173-8025-adf5e6b51a35",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "b0800019-6bdf-8173-8025-adf5e6b51a35",
+      "id": "4fc00019-6bdf-8173-8f36-7b7fc99756a8",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 1,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 19c00019-6bdf-8173-800f-a81ef54f107e",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "19c00019-6bdf-8173-800f-a81ef54f107e",
+      "id": "a1800019-6bdf-8173-8f35-32a3a81be188",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 2,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 7f800019-6bdf-8173-8019-85516ec608d5",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "7f800019-6bdf-8173-8019-85516ec608d5",
+      "id": "85c00019-6bdf-8173-8f17-d6a187de3b8c",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 3,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 09000019-6bdf-8173-8039-ae1a94b62513",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "09000019-6bdf-8173-8039-ae1a94b62513",
+      "id": "98800019-6bdf-8173-8f0f-89b33c4d8e8b",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 4,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 86000019-6bdf-8173-8030-ac646cc79c78",
+        "listPlacements": "asc asset-placements list --localization-id e8eca007-65e4-4658-82d5-2ac5827f925c"
+      },
+      "assetId": "86000019-6bdf-8173-8030-ac646cc79c78",
+      "id": "0bc00019-6bdf-8173-8f2f-7b5bff262cec",
+      "localizationId": "e8eca007-65e4-4658-82d5-2ac5827f925c",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 5,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id ef400019-6bdf-8173-800c-c5df5f930227",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "ef400019-6bdf-8173-800c-c5df5f930227",
+      "id": "acc00019-6bdf-8173-8f17-60952e9322b0",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 1,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id c8400019-6bdf-8173-8026-6a795539d194",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "c8400019-6bdf-8173-8026-6a795539d194",
+      "id": "7b000019-6bdf-8173-8f37-5a670064250d",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 2,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 1f000019-6bdf-8173-8007-3614408171cb",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "1f000019-6bdf-8173-8007-3614408171cb",
+      "id": "77400019-6bdf-8173-8f19-19b731b19ce1",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 3,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 8f800019-6bdf-8173-801e-1e956b27e27a",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "8f800019-6bdf-8173-801e-1e956b27e27a",
+      "id": "b2800019-6bdf-8173-8f17-32c091ccf595",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 4,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 75800019-6bdf-8173-802c-48544275bab7",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "75800019-6bdf-8173-802c-48544275bab7",
+      "id": "20c00019-6bdf-8173-8f3d-3d13a724660f",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_MEDIUM_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 5,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 3a800019-6bdf-8173-8023-2eb487915fd6",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "3a800019-6bdf-8173-8023-2eb487915fd6",
+      "id": "1dc00019-6bdf-8173-8f0f-a01970b96b51",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 1,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 33c00019-6bdf-8173-803a-d3194768460a",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "33c00019-6bdf-8173-803a-d3194768460a",
+      "id": "22400019-6bdf-8173-8f2b-e36205003ac1",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 2,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id c8c00019-6bdf-8173-8034-00f8ef12663e",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "c8c00019-6bdf-8173-8034-00f8ef12663e",
+      "id": "6f000019-6bdf-8173-8f16-6d34a0efc4cd",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 3,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 7a400019-6bdf-8173-802f-6dc46cb37072",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "7a400019-6bdf-8173-802f-6dc46cb37072",
+      "id": "78c00019-6bdf-8173-8f39-b351cd31aa9f",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 4,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    },
+    {
+      "affordances": {
+        "listAssetPlacements": "asc asset-placements list --image-id 4d400019-6bdf-8173-8027-e76d47b7799c",
+        "listPlacements": "asc asset-placements list --localization-id 0bfb47af-ce29-4c1e-8b6e-f33b9faf3103"
+      },
+      "assetId": "4d400019-6bdf-8173-8027-e76d47b7799c",
+      "id": "21c00019-6bdf-8173-8f03-52c7fcafa6d9",
+      "localizationId": "0bfb47af-ce29-4c1e-8b6e-f33b9faf3103",
+      "mediaType": "IMAGE",
+      "placementGroup": "IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE",
+      "placementType": "APP_SCREENSHOT",
+      "position": 5,
+      "state": "ACTIVE",
+      "surface": "APP_STORE_VERSION_LOCALIZATION"
+    }
+  ],
+  "complete": true
+}

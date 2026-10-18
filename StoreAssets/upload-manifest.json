@@ -1,0 +1,162 @@
+[
+  {
+    "locale": "zh-Hans",
+    "size": "1320x2868",
+    "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+    "file": "exports/ios/iphone/1320x2868/zh-Hans/01-hero.png",
+    "screenshotId": "043f7ae3-4e3b-4b15-806f-dfb98f0341af",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1320x2868",
+    "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+    "file": "exports/ios/iphone/1320x2868/zh-Hans/02-device-bottom.png",
+    "screenshotId": "19c00019-6bdf-8173-800f-a81ef54f107e",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1320x2868",
+    "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+    "file": "exports/ios/iphone/1320x2868/zh-Hans/03-hero.png",
+    "screenshotId": "7f800019-6bdf-8173-8019-85516ec608d5",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1320x2868",
+    "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+    "file": "exports/ios/iphone/1320x2868/zh-Hans/04-device-top.png",
+    "screenshotId": "09000019-6bdf-8173-8039-ae1a94b62513",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1320x2868",
+    "setId": "b310308b-0c02-4393-8f2e-1033ea94d6f4",
+    "file": "exports/ios/iphone/1320x2868/zh-Hans/05-device-bottom.png",
+    "screenshotId": "86000019-6bdf-8173-8030-ac646cc79c78",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1320x2868",
+    "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+    "file": "exports/ios/iphone/1320x2868/en-US/01-hero.png",
+    "screenshotId": "3a800019-6bdf-8173-8023-2eb487915fd6",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1320x2868",
+    "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+    "file": "exports/ios/iphone/1320x2868/en-US/02-device-bottom.png",
+    "screenshotId": "33c00019-6bdf-8173-803a-d3194768460a",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1320x2868",
+    "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+    "file": "exports/ios/iphone/1320x2868/en-US/03-hero.png",
+    "screenshotId": "c8c00019-6bdf-8173-8034-00f8ef12663e",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1320x2868",
+    "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+    "file": "exports/ios/iphone/1320x2868/en-US/04-device-top.png",
+    "screenshotId": "7a400019-6bdf-8173-802f-6dc46cb37072",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1320x2868",
+    "setId": "7be0717e-559a-4511-9eff-681f9a2d145f",
+    "file": "exports/ios/iphone/1320x2868/en-US/05-device-bottom.png",
+    "screenshotId": "4d400019-6bdf-8173-8027-e76d47b7799c",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1206x2622",
+    "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+    "file": "exports/ios/iphone/1206x2622/zh-Hans/01-hero.png",
+    "screenshotId": "f0c00019-6bdf-8173-8006-0ce7a2d00d6a",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1206x2622",
+    "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+    "file": "exports/ios/iphone/1206x2622/zh-Hans/02-device-bottom.png",
+    "screenshotId": "cb000019-6bdf-8173-803d-98af170b01a7",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1206x2622",
+    "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+    "file": "exports/ios/iphone/1206x2622/zh-Hans/03-hero.png",
+    "screenshotId": "75000019-6bdf-8173-8002-c3798d2826c8",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1206x2622",
+    "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+    "file": "exports/ios/iphone/1206x2622/zh-Hans/04-device-top.png",
+    "screenshotId": "d6800019-6bdf-8173-8012-a73a836bb4df",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "zh-Hans",
+    "size": "1206x2622",
+    "setId": "49626ed6-7859-45e2-ae0e-9124387f1b89",
+    "file": "exports/ios/iphone/1206x2622/zh-Hans/05-device-bottom.png",
+    "screenshotId": "fa400019-6bdf-8173-8005-fedca2a96486",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1206x2622",
+    "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+    "file": "exports/ios/iphone/1206x2622/en-US/01-hero.png",
+    "screenshotId": "ef400019-6bdf-8173-800c-c5df5f930227",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1206x2622",
+    "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+    "file": "exports/ios/iphone/1206x2622/en-US/02-device-bottom.png",
+    "screenshotId": "c8400019-6bdf-8173-8026-6a795539d194",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1206x2622",
+    "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+    "file": "exports/ios/iphone/1206x2622/en-US/03-hero.png",
+    "screenshotId": "1f000019-6bdf-8173-8007-3614408171cb",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1206x2622",
+    "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+    "file": "exports/ios/iphone/1206x2622/en-US/04-device-top.png",
+    "screenshotId": "8f800019-6bdf-8173-801e-1e956b27e27a",
+    "state": "COMPLETE"
+  },
+  {
+    "locale": "en-US",
+    "size": "1206x2622",
+    "setId": "1d8ddd54-c6cc-4853-bb98-52ab29205884",
+    "file": "exports/ios/iphone/1206x2622/en-US/05-device-bottom.png",
+    "screenshotId": "75800019-6bdf-8173-802c-48544275bab7",
+    "state": "COMPLETE"
+  }
+]

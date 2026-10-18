@@ -46,6 +46,7 @@ struct PhotoGridView: View {
                 },
                 onMonth: { month = $0 },
                 onScrolling: { scrolling in
+                    model.searchScrollingChanged(scrolling)
                     hideMonth?.cancel()
                     if scrolling {
                         withAnimation(.easeOut(duration: 0.2)) { showMonth = true }
@@ -72,6 +73,7 @@ struct PhotoGridView: View {
                     .allowsHitTesting(false)
             }
         }
+        .onDisappear { model.searchScrollingChanged(false) }
         .overlay {
             if showLowConfidence {
                 lowConfidenceState
@@ -447,6 +449,7 @@ final class GridCoordinator: ThumbnailGridCoordinator {
         case .began:
             if snapLink != nil { endSnap() }
             guard !state.ids.isEmpty else { return }
+            onScrolling(true)
             let point = pinch.location(in: collectionView)
             let index = layout.index(at: point)
             let frame = layout.frame(at: index)
@@ -501,6 +504,7 @@ final class GridCoordinator: ThumbnailGridCoordinator {
         snapLink = nil
         setColumns(snapTo)
         anchor = nil
+        onScrolling(false)
         if savesColumns { model.gridColumns = Int(snapTo) }
         // Cached and requested sizes belong to the old zoom: drop the cache and
         // re-request cells that grew (they keep showing their image meanwhile).

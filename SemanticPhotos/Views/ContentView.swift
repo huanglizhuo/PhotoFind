@@ -86,12 +86,9 @@ struct ContentView: View {
                             if !model.isLowConfidence || model.showLowRelevance {
                                 SearchSummaryBar(
                                     found: model.totalResultCount,
-                                    shown: results.count,
                                     indexed: model.photos.count,
                                     total: model.libraryPhotoCount,
-                                    hasMore: model.hasMoreResults,
-                                    lowRelevance: model.isLowConfidence,
-                                    loadMore: model.loadMoreResults)
+                                    lowRelevance: model.isLowConfidence)
                             }
                         } else {
                             if model.startupPhase != .idle {
@@ -339,15 +336,12 @@ struct ContentView: View {
 }
 
 /// One compact line above the search bar while results are showing: result
-/// count, coverage and the "显示更多" action (v0.8).
+/// count and coverage. All ranked candidates are already visible.
 private struct SearchSummaryBar: View {
     let found: Int
-    let shown: Int
     let indexed: Int
     let total: Int
-    let hasMore: Bool
     let lowRelevance: Bool
-    let loadMore: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -355,11 +349,6 @@ private struct SearchSummaryBar: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if hasMore {
-                Button(String(localized: "显示更多"), action: loadMore)
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.plain)
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -372,7 +361,6 @@ private struct SearchSummaryBar: View {
         var parts: [String] = []
         if lowRelevance { parts.append(String(localized: "低相关")) }
         parts.append(found >= AppModel.maxRankedResults ? String(localized: "最相关的 \(found) 张") : String(localized: "候选 \(found) 张"))
-        if shown < found { parts.append(String(localized: "已显示 \(shown) 张")) }
         if total > 0 { parts.append(String(localized: "可搜索 \(indexed)/\(total) 张")) }
         return parts.joined(separator: " · ")
     }

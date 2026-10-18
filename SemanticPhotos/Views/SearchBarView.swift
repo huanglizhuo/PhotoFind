@@ -25,7 +25,8 @@ struct SearchBarView: View {
                                 placeholder: model.searchTitle ?? String(localized: "描述你想找的照片…"),
                                 onEdit: model.searchInputChanged,
                                 onSearch: model.searchTextChanged,
-                                onSubmit: model.submitSearch)
+                                onSubmit: model.submitSearch,
+                                onCancel: model.cancelPendingSearchInput)
 
                 if model.isSearching { ProgressView() }
                 if !model.searchText.isEmpty {

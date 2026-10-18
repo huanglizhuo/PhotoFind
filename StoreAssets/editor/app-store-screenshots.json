@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "appName": "PhotoFind",
+  "themeId": "photofind",
+  "connectedCanvas": false,
+  "locales": [
+    "zh-Hans",
+    "en-US"
+  ],
+  "locale": "zh-Hans",
+  "device": "iphone",
+  "orientation": "portrait",
+  "appIcon": "/app-icon.png",
+  "slidesByDevice": {
+    "iphone": [
+      {
+        "id": "photofind-1",
+        "layout": "hero",
+        "label": {
+          "zh-Hans": "一句找图 · 智能搜索",
+          "en-US": "PhotoFind · Search"
+        },
+        "headline": {
+          "zh-Hans": "一句话，\n找回那张照片",
+          "en-US": "Find the photo.\nJust describe it."
+        },
+        "screenshot": "/screenshots/apple/iphone/{locale}/01-search.png",
+        "inverted": false,
+        "transforms": {
+          "caption": {
+            "x": 80,
+            "y": 230,
+            "width": 1160,
+            "height": 470,
+            "zIndex": 4
+          },
+          "device": {
+            "x": 180,
+            "y": 760,
+            "width": 960,
+            "height": 1955.6947162426613,
+            "rotation": 0,
+            "zIndex": 3
+          }
+        }
+      },
+      {
+        "id": "photofind-2",
+        "layout": "device-bottom",
+        "label": {
+          "zh-Hans": "色彩宇宙",
+          "en-US": "Color Universe"
+        },
+        "headline": {
+          "zh-Hans": "跟着颜色，\n重逛你的相册",
+          "en-US": "Follow a color.\nFind a memory."
+        },
+        "screenshot": "/screenshots/apple/iphone/{locale}/02-color.png",
+        "inverted": false,
+        "transforms": {
+          "caption": {
+            "x": 80,
+            "y": 230,
+            "width": 1160,
+            "height": 470,
+            "zIndex": 4
+          },
+          "device": {
+            "x": 180,
+            "y": 760,
+            "width": 960,
+            "height": 1955.6947162426613,
+            "rotation": 0,
+            "zIndex": 3
+          }
+        }
+      },
+      {
+        "id": "photofind-3",
+        "layout": "hero",
+        "label": {
+          "zh-Hans": "整理相册",
+          "en-US": "Make an album"
+        },
+        "headline": {
+          "zh-Hans": "找到喜欢的，\n顺手整理好",
+          "en-US": "Find it.\nKeep it together."
+        },
+        "screenshot": "/screenshots/apple/iphone/{locale}/03-organize.png",
+        "inverted": false,
+        "transforms": {
+          "caption": {
+            "x": 80,
+            "y": 230,
+            "width": 1160,
+            "height": 470,
+            "zIndex": 4
+          },
+          "device": {
+            "x": 180,
+            "y": 760,
+            "width": 960,
+            "height": 1955.6947162426613,
+            "rotation": 0,
+            "zIndex": 3
+          }
+        }
+      },
+      {
+        "id": "photofind-4",
+        "layout": "device-top",
+        "label": {
+          "zh-Hans": "深色模式",
+          "en-US": "Dark Mode"
+        },
+        "headline": {
+          "zh-Hans": "白天或夜晚，\n都看得舒服",
+          "en-US": "Your photos.\nDay or night."
+        },
+        "screenshot": "/screenshots/apple/iphone/{locale}/04-dark.png",
+        "inverted": true,
+        "transforms": {
+          "caption": {
+            "x": 80,
+            "y": 2300,
+            "width": 1160,
+            "height": 470,
+            "zIndex": 4
+          },
+          "device": {
+            "x": 180,
+            "y": 150,
+            "width": 960,
+            "height": 1955.6947162426613,
+            "rotation": 0,
+            "zIndex": 3
+          }
+        }
+      },
+      {
+        "id": "photofind-5",
+        "layout": "device-bottom",
+        "label": {
+          "zh-Hans": "本机处理 · 无需账号",
+          "en-US": "On-device · No account"
+        },
+        "headline": {
+          "zh-Hans": "照片留在本机，\n回忆只属于你",
+          "en-US": "Your memories.\nOn your device."
+        },
+        "screenshot": "/screenshots/apple/iphone/{locale}/05-privacy.png",
+        "inverted": false,
+        "transforms": {
+          "caption": {
+            "x": 80,
+            "y": 230,
+            "width": 1160,
+            "height": 470,
+            "zIndex": 4
+          },
+          "device": {
+            "x": 180,
+            "y": 760,
+            "width": 960,
+            "height": 1955.6947162426613,
+            "rotation": 0,
+            "zIndex": 3
+          }
+        }
+      }
+    ],
+    "android": [],
+    "ipad": [],
+    "android-7": [],
+    "android-10": [],
+    "feature-graphic": []
+  },
+  "crossScreenMockupsByDevice": {
+    "iphone": [],
+    "ipad": [],
+    "android": [],
+    "android-7": [],
+    "android-10": [],
+    "feature-graphic": []
+  }
+}

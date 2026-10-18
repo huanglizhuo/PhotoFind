@@ -13,14 +13,18 @@ The version and build number are shared in project.yml; CI overrides the build n
 - [x] Release archive 1.0 (4): all three bundles, versions, entitlements, privacy, iPhone targeting and distribution signing validated.
 - [x] Dedicated macOS runner and repeatable CI tests: 80 passed, zero failed/skipped.
 - [x] GitHub Actions run produces a processed TestFlight build in the internal group: 1.0 (4), VALID, findImage membership verified.
-- [ ] Fresh Apple-hosted download: intentionally not exercised; user chose to preserve device data and test an upgrade only.
+- [x] User-reported physical-device model download passed on 18 October 2026. The agent did not independently observe the installation path or network trace; this does not claim the separate retained-data upgrade checklist was completed.
 - [x] Simulator UI acceptance: 18 distinct scenarios passed after fixing test scrolling and completing the color fixtures (406 indexed photos). Covers startup input/cancel, selection/deletion confirmation, sharing, photo detail dismissal, search controls, color scrolling, EN/ZH, appearance and storage confirmation.
 - [ ] Physical-device upgrade and retained-data acceptance: user elected to install manually after pipeline completion. Existing device data remains untouched; protected backup has 1,219 indexed photos and zero pending photos. Full fresh-install, limited-permission and real network-failure/offline coverage is not claimed.
-- [ ] Remaining release gate: user completes TestFlight upgrade acceptance. Store text/screenshots, review contact details, price/regions and formal review are deferred to the store-materials stage.
+- [x] Bilingual store name, subtitle, description, keywords, promotional text, support/privacy URLs and review contact saved on 18 October 2026. English store name: PhotoFind: Private Search; Chinese: 一句找图.
+- [x] Store screenshots uploaded via asc: 5 per locale (zh-Hans/en-US), each in 1320×2868 and 1206×2622. All 20 images COMPLETE; all 20 placements ACTIVE in correct 1–5 order. Actual simulator captures use licensed demo photos and the current working tree. Evidence: StoreAssets/asc-verification.json; reproduction: StoreAssets/editor/app-store-screenshots.json.
+- [x] First release priced free; all 175 current territories selected, including China mainland. Future territories are not automatically enabled. Version 1.0 is configured for manual release.
+- [ ] Before formal review: upload/link a release build matching the current working-tree UI, complete retained-data upgrade acceptance, and resolve China mainland ICP requirements. User currently has no filing number; the field remains empty. Region selection does not establish distribution eligibility.
+- [ ] Formal review remains deliberately unsubmitted. Submit the first app and SemanticPhotosModel v1 together only on a later explicit instruction.
 
 CI validation for build 4: 80 tests passed, zero failures or unexpected skips. UI evidence is retained locally in ReleaseAcceptance.xcresult, ReleaseAcceptanceRetry.xcresult and ColorScrollAcceptance.xcresult. The initial UI run had two failures: a test needed to scroll to the storage row, and the color-scroll fixture needed enough fully indexed photos; both targeted reruns passed.
 
-Final release: **1.0 (4)**, build ID `ae577568-dcd3-4931-a051-c16bd56b5338`, source commit `2efcc79`. [Publish TestFlight run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119388888) completed the full test → archive → export → upload → Apple processing → internal-group verification flow. [Independent CI run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119389036) also passed.
+Latest processed TestFlight build: **1.0 (4)**, build ID `ae577568-dcd3-4931-a051-c16bd56b5338`, source commit `2efcc79`. [Publish TestFlight run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119388888) completed the full test → archive → export → upload → Apple processing → internal-group verification flow. [Independent CI run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39119389036) also passed.
 
 The previous build 3 was valid, but its workflow failed on redundant manual assignment to an automatically populated internal group. The pipeline now reads Apple's group/build relationship and verifies the exact uploaded build instead.
 
@@ -63,10 +67,26 @@ To publish another build: GitHub → Actions → Publish TestFlight → Run work
 
 The dedicated keychain contains only the selected distribution identity (expires 25 April 2027). CI downloads the three named PhotoFind App Store profiles, signs manually and verifies get-task-allow is false. Renew the certificate/profiles before expiration. Other apps’ runners and keychains are retained.
 
-Privacy declaration: published “Data Not Collected” after explicit confirmation. Policy URL and support URL saved in App Store Connect. Age rating configured (4+), categories Photo & Video / Utilities, no review login required, model-download review notes saved. Price and regions are deliberately undecided per user instruction. Apple-hosted SemanticPhotosModel v1 is Ready for Internal Testing (314 MB compressed).
+Privacy declaration: published “Data Not Collected” after explicit confirmation. Policy URL and support URL saved in App Store Connect. Age rating configured (4+), categories Photo & Video / Utilities, no review login required, model-download review notes saved. The first release is free in all 175 current territories by user instruction, with manual release after approval. China mainland ICP information remains unresolved. Apple-hosted SemanticPhotosModel v1 is Ready for Internal Testing (314 MB compressed).
 
 Release validation also rejects accidental iPad targeting (`UIDeviceFamily` must be `[1]`). Keep TARGETED_DEVICE_FAMILY quoted in project.yml: XcodeGen can interpret JSON numeric 1 as a Boolean when generating the CI signing project.
 
 ## Manual upgrade acceptance
 
 Install version 1.0 (4), or a later processed build, through TestFlight over the existing app; do not delete the app first. Confirm the build number in About, existing search history/settings, retained index count (baseline: 1,219), and no repeated model download. Try a text search, scroll results and open/close a photo. Do not rebuild the index or clear storage during this upgrade check. The protected local backup is outside Git at `/Users/lizhuo/owork/photofind-backups/2026-10-18/device-library`.
+
+## Store materials (18 October 2026)
+
+`StoreAssets/metadata/` contains the uploaded bilingual copy and review instructions; personal reviewer contact was entered directly into App Store Connect, not stored here. `photo-sources.json` records demo image sources. `capture-manifest.json` records the simulator and raw screenshot hashes. The screenshot editor uses the requested app-store-screenshots skill template with a lilac palette; all five screens stand alone so controls and captions are never split. The editor build passed, and its standard Export bundle generated 40 opaque PNGs across two locales and four sizes.
+
+App Store Connect readiness passes localization, screenshots, price and review contact. A current release build is not yet linked; do not link build 4 as if it contained the newer working-tree search changes. China mainland is selected but the user has no ICP filing number yet. No review submission, automatic release or new binary publication was performed during store-material preparation.
+
+To reopen the screenshot editor:
+
+```sh
+cd /Users/lizhuo/owork/monDigital/iOS/SemanticPhotos/StoreAssets/editor
+npm install --legacy-peer-deps
+npm run dev -- --hostname 127.0.0.1 --port 3088
+```
+
+Open http://127.0.0.1:3088. Export bundle recreates the localized iPhone PNGs. Raw screenshots and source photos are not production app resources.

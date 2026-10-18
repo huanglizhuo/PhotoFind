@@ -58,51 +58,85 @@ final class AppModel {
     }
     var searchText = ""
     var searchFilter = SearchFilter()
-    private(set) var isSearchPending = false
+    private(set) var isSearchPending = false { didSet { updateSearchPriority() } }
     private(set) var searchPreparation = SearchPreparation()
     @ObservationIgnored private var searchPreparationTask: Task<Void, Never>?
-    @ObservationIgnored private var lastQueryVector: (query: String, vector: [Float])?
+    private var committedSearchQuery: String?
+    @ObservationIgnored private var committedSearchIsImmediate = false
+    @ObservationIgnored private lazy var textSearch = makeTextSearchScheduler()
+
+    private func makeTextSearchScheduler() -> TextSearchScheduler {
+        let scheduler = TextSearchScheduler(embed: { [engine] request in
+            try await engine.embedTextForSearch(request.query, dimension: request.dimension)
+        }, rank: { [weak self] request, vector in
+            guard let self else { return [] }
+            let rows = try await self.store.searchRows(filter: request.filter)
+            let hits = try await SearchEngine.rank(query: vector, text: request.query, rows: rows,
+                                                  k: Self.maxRankedResults)
+            if self.photos.isEmpty { await self.reloadIndex() }
+            return hits
+        })
+        scheduler.onActivity = { [weak self] active in self?.isTextSearching = active }
+        scheduler.onResults = { [weak self] request, hits in
+            guard let self, self.committedSearchQuery == request.query,
+                  TextSearchScheduler.normalized(self.searchText) == request.query,
+                  self.searchFilter == request.filter else { return }
+            guard self.libraryRevision == request.libraryRevision else { self.performSearch(); return }
+            self.lastModelUse = Date()
+            self.show(hits)
+        }
+        scheduler.onError = { [weak self] error in self?.searchError = error.localizedDescription }
+        return scheduler
+    }
+
+    func searchScrollingChanged(_ scrolling: Bool) { textSearch.setScrolling(scrolling) }
+
+    private func updateSearchPriority() {
+        pipeline.prioritizeSearch(isSearchPending || isTextSearching || isImageSearching)
+    }
 
     func searchFiltersChanged() {
-        guard !isSearchPending, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isSearchPending, !TextSearchScheduler.normalized(searchText).isEmpty else { return }
         searchPreparation.inputChanged()
+        committedSearchQuery = TextSearchScheduler.normalized(searchText)
+        committedSearchIsImmediate = false
         performSearch()
     }
 
     func cancelPendingSearchInput() {
         searchPreparation.cancel()
+        committedSearchQuery = nil
+        textSearch.invalidate()
+        searchTask?.cancel()
+        isImageSearching = false
         isSearchPending = false
     }
 
     func retrySearchPreparation() {
         searchPreparation.state = .preparing
-        _ = searchPreparation.request(searchText.trimmingCharacters(in: .whitespacesAndNewlines))
+        if let committedSearchQuery { _ = searchPreparation.request(committedSearchQuery) }
         Task { await warmUpEngine() }
     }
 
     func dismissSearchError() { searchError = nil }
 
     private(set) var searchResults: [ScoredPhoto]?
-    /// Full ranked list (up to `maxRankedResults`); `searchResults` is its
-    /// visible prefix so "显示更多" can append without re-ranking.
+    /// All ranked candidates are visible; the collection view loads thumbnails on demand.
     private var allResults: [ScoredPhoto] = []
-    private var resultLimit = 60
     private var lastSeed: String?
-    static let resultPageSize = 60
     static let maxRankedResults = 240
     /// Index in `searchResults` where the "相关度较低" divider goes (F4.3).
     private(set) var lowRelevanceStart: Int?
     /// Best non-text, non-seed score is below the floor: the query has no
     /// convincing match, so the grid offers "查看低相关结果" instead of showing
-    /// 60 random photos (v0.8).
+    /// unrelated photos.
     private(set) var isLowConfidence = false
     private(set) var showLowRelevance = false
-    private(set) var hasMoreResults = false
     /// Shown in the search bar for searches without typed text (相似照片).
     private(set) var searchTitle: String?
-    private(set) var isSearching = false {
-        didSet { pipeline.prioritizeSearch(isSearching) }
-    }
+    var isSearching: Bool { (committedSearchQuery != nil && isTextSearching) || isImageSearching }
+    private var isTextSearching = false { didSet { updateSearchPriority() } }
+    private var isImageSearching = false { didSet { updateSearchPriority() } }
     private(set) var searchError: String?
     private(set) var recentSearches: [String]
     private var searchTask: Task<Void, Never>?
@@ -132,7 +166,7 @@ final class AppModel {
 
     // F4.6 (T12): the index format is fixed. There is no user-facing dimension
     // setting anymore; a model/dimension change rebuilds silently.
-    static let embeddingDimension = 256
+    nonisolated static let embeddingDimension = 256
     var dimension: Int { Self.embeddingDimension }
 
     /// F4.3 divider: a result is low relevance below max(best − gap, floor).
@@ -225,6 +259,7 @@ final class AppModel {
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.textSearch.clearCache()
                 await self?.store.clearSearchTextCache()
                 await self?.engine.unload()
                 self?.searchPreparation.state = .preparing
@@ -337,7 +372,7 @@ final class AppModel {
                 try await engine.warmUp()
                 startupPhase = .ready
                 if let query = searchPreparation.finish(),
-                   query == searchText.trimmingCharacters(in: .whitespacesAndNewlines) {
+                   query == TextSearchScheduler.normalized(searchText) {
                     performSearch()
                 }
             } catch {
@@ -418,6 +453,7 @@ final class AppModel {
                 }
             }
         case .background:
+            cancelPendingSearchInput()
             isInForeground = false
             let gpu = background.hasBackgroundGPU
             Task { await engine.setDelegate(gpu ? .gpu : .cpu, fallbackToCPU: gpu) }
@@ -575,7 +611,7 @@ final class AppModel {
         pipeline.forget(gone)
         library.remove(gone)
         allResults.removeAll { gone.contains($0.id) }
-        if searchResults != nil { applyResultLimit() }
+        if searchResults != nil { refreshSearchResults() }
     }
 
     func photo(_ id: String) -> IndexedPhoto? {
@@ -592,23 +628,29 @@ final class AppModel {
 
     // MARK: - Search (F4)
 
-    /// Called immediately on edits so an older query cannot publish while the user is typing.
+    /// Edits invalidate publication immediately; only confirmed, debounced input is eligible.
     func searchInputChanged() {
         searchPreparation.inputChanged()
+        committedSearchQuery = nil
+        textSearch.invalidate()
         searchTask?.cancel()
-        isSearchPending = !searchText.isEmpty
+        isImageSearching = false
+        isSearchPending = !TextSearchScheduler.normalized(searchText).isEmpty
         searchError = nil
-        isSearching = false
         if !searchText.isEmpty { searchTitle = nil }
         pipeline.noteInteraction(quietPeriod: .milliseconds(650))
     }
 
     func searchTextChanged() {
+        committedSearchQuery = TextSearchScheduler.normalized(searchText)
+        committedSearchIsImmediate = false
         performSearch()
     }
 
     func submitSearch() {
         searchPreparation.inputChanged()
+        committedSearchQuery = TextSearchScheduler.normalized(searchText)
+        committedSearchIsImmediate = true
         rememberSearch(searchText)
         performSearch()
     }
@@ -620,64 +662,26 @@ final class AppModel {
     }
 
     private func performSearch() {
-        searchTask?.cancel()
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let query = committedSearchQuery,
+              query == TextSearchScheduler.normalized(searchText) else { return }
         guard !query.isEmpty else {
             if searchTitle == nil { clearSearch() }
             return
         }
         guard searchPreparation.request(query), isModelReady else {
             isSearchPending = searchPreparation.pendingQuery != nil
-            isSearching = false
             if isModelReady, indexRestored, searchPreparation.state == .preparing, searchPreparationTask == nil {
                 Task { await warmUpEngine() }
             }
             return
         }
-        isSearchPending = false
-        isSearching = true
+        searchTask?.cancel()
+        isImageSearching = false
         searchError = nil
         searchTitle = nil
-        let filter = searchFilter
-        searchTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if !Task.isCancelled {
-                    self.isSearching = false
-                }
-            }
-            do {
-                let loaded = await self.engine.isLoaded
-                try Task.checkCancellation()
-                guard loaded else {
-                    self.searchPreparation.state = .preparing
-                    _ = self.searchPreparation.request(query)
-                    self.isSearchPending = true
-                    self.isSearching = false
-                    await self.warmUpEngine()
-                    return
-                }
-                let queryVector: [Float]
-                if let cached = self.lastQueryVector, cached.query == query {
-                    queryVector = cached.vector
-                } else {
-                    queryVector = try await self.engine.embedText(query, dimension: self.dimension)
-                    try Task.checkCancellation()
-                    self.lastQueryVector = (query, queryVector)
-                }
-                try Task.checkCancellation()
-                self.lastModelUse = Date()
-                let rows = try await self.store.searchRows(filter: filter)
-                let hits = try await SearchEngine.rank(query: queryVector, text: query, rows: rows,
-                                                       k: Self.maxRankedResults)
-                // A Siri search can cold-launch the app before the photo list loads.
-                if self.photos.isEmpty { await self.reloadIndex() }
-                guard !Task.isCancelled else { return }
-                self.show(hits)
-            } catch {
-                if !Task.isCancelled { self.searchError = error.localizedDescription }
-            }
-        }
+        textSearch.submit(.init(query: query, filter: searchFilter, libraryRevision: libraryRevision),
+                          immediate: committedSearchIsImmediate)
+        isSearchPending = false
     }
 
     /// `seed`: the photo a similar-photo search started from, which matches
@@ -692,16 +696,15 @@ final class AppModel {
             }
         }
         lastSeed = seed
-        resultLimit = Self.resultPageSize
         showLowRelevance = false
-        applyResultLimit()
+        refreshSearchResults()
         searchTitle = title
     }
 
-    /// Slices the ranked list and recomputes the low-relevance divider. Text
+    /// Publishes all ranked candidates and recomputes the low-relevance divider. Text
     /// matches and the similar-photo seed never act as the reference (F4.12).
-    private func applyResultLimit() {
-        let visible = Array(allResults.prefix(resultLimit))
+    private func refreshSearchResults() {
+        let visible = allResults
         let scores = visible.map(\.score)
         let excluded = Set(visible.enumerated()
             .filter { $0.element.textMatch || $0.element.id == lastSeed }
@@ -711,19 +714,11 @@ final class AppModel {
         lowRelevanceStart = best
             .map { SearchEngine.Relevance.cutoff(best: $0, gap: relevanceGap, floor: relevanceFloor) }
             .flatMap { SearchEngine.Relevance.firstIndexBelow(scores, cutoff: $0, excluding: excluded) }
-        hasMoreResults = allResults.count > resultLimit
-        searchResults = visible
+        if searchResults != visible { searchResults = visible }
     }
 
-    /// Number of ranked results before the visible page limit.
+    /// Number of ranked candidates, all available without a second tap.
     var totalResultCount: Int { allResults.count }
-
-    /// "显示更多": appends the next page without re-ranking.
-    func loadMoreResults() {
-        guard hasMoreResults else { return }
-        resultLimit = min(resultLimit + Self.resultPageSize, allResults.count)
-        applyResultLimit()
-    }
 
     /// The user chose to see the low-relevance tail after a "没有找到足够相关"
     /// state; the grid then shows all currently ranked results.
@@ -734,15 +729,14 @@ final class AppModel {
     /// F4.9: the photo's stored vector is the query, so no inference runs.
     func showSimilar(to id: String) {
         guard isModelReady else { return }
-        searchPreparation.cancel()
-        isSearchPending = false
+        cancelPendingSearchInput()
         searchError = nil
         searchFilter = SearchFilter()
         searchTask?.cancel()
-        isSearching = true
+        isImageSearching = true
         searchTask = Task { [weak self] in
             guard let self else { return }
-            defer { if !Task.isCancelled { self.isSearching = false } }
+            defer { if !Task.isCancelled { self.isImageSearching = false } }
             guard let vector = try? await self.store.vector(for: id),
                   let rows = try? await self.store.searchRows(includeText: false) else { return }
             guard var hits = try? await SearchEngine.rank(query: vector, rows: rows,
@@ -761,15 +755,14 @@ final class AppModel {
     /// the extension.
     func showSimilar(toImage image: UIImage) {
         guard isModelReady else { return }
-        searchPreparation.cancel()
-        isSearchPending = false
+        cancelPendingSearchInput()
         searchError = nil
         searchFilter = SearchFilter()
-        isSearching = true
+        isImageSearching = true
         searchTask?.cancel()
         searchTask = Task { [weak self] in
             guard let self else { return }
-            defer { if !Task.isCancelled { self.isSearching = false } }
+            defer { if !Task.isCancelled { self.isImageSearching = false } }
 
             // v0.8: exact/near duplicates first. A forwarded WeChat image is a
             // recompressed/resized copy; dHash reliably identifies the original
@@ -817,9 +810,7 @@ final class AppModel {
     }
 
     func clearSearch() {
-        searchPreparation.cancel()
-        searchTask?.cancel()
-        isSearchPending = false
+        cancelPendingSearchInput()
         searchError = nil
         searchFilter = SearchFilter()
         searchText = ""
@@ -827,12 +818,10 @@ final class AppModel {
         searchResults = nil
         allResults = []
         lastSeed = nil
-        resultLimit = Self.resultPageSize
         lowRelevanceStart = nil
         isLowConfidence = false
         showLowRelevance = false
-        hasMoreResults = false
-        isSearching = false
+        isImageSearching = false
     }
 
     private func rememberSearch(_ text: String) {
@@ -892,7 +881,7 @@ final class AppModel {
         displayUpdateTask = nil
         pendingDisplayPhotos.removeAll()
         library = IndexedLibrary()
-        lastQueryVector = nil
+        textSearch.clearCache()
         await updateIndexConfigIfNeeded()
         libraryRevision += 1
         var revision: Int
@@ -917,7 +906,6 @@ final class AppModel {
         lowRelevanceStart = nil
         isLowConfidence = false
         showLowRelevance = false
-        hasMoreResults = false
         try? await store.setIndexConfig(EmbeddingStore.IndexConfig(modelVersion: ModelFile.version, dimension: dimension))
         // The launch pipeline reloads the now-empty index and `indexUnindexed`
         // queues the library afterwards; queuing here would still see the old

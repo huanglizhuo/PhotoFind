@@ -1,0 +1,44 @@
+name
+PhotoFind: Private Search
+
+subtitle
+Find photos with your words
+
+keywords
+picture,search,gallery,color,offline,private,organize,memories,local,album
+
+promotionalText
+Remember the moment, but not where the photo is? Describe it in your own words or explore your library by color. Photos are processed on your device. No account needed.
+
+description
+Remember the pink flowers, an evening by the sea, or coffee with dessert—but not where the photo is?
+Describe the scene and let PhotoFind help you find it in your library.
+
+SEARCH WITH YOUR OWN WORDS
+Try “pink flowers,” “scenery by the sea,” or “coffee and dessert.” Search by what is in a photo without adding tags to every image or remembering a filename.
+
+EXPLORE YOUR COLOR UNIVERSE
+Browse photos by their dominant colors. Move around the color ring, from warm orange and soft pink to deep blue, to rediscover images that match the colors you remember.
+
+FIND IT. THEN ORGANIZE IT.
+Open a photo for a closer look, mark favorites, or select several photos to share, create an album, or delete. Deletion requires confirmation.
+
+PROCESSED ON YOUR DEVICE
+Photo indexing and search run on your device. The app does not upload your photos to our servers, and no account is required. Grant access to selected photos or your entire library.
+
+MADE FOR EVERYDAY USE
+Use PhotoFind in English or Simplified Chinese, with light, dark, or system appearance. After the initial index, later passes usually process only new or edited photos.
+
+GETTING STARTED
+The first launch requires an internet connection to download the search model, followed by indexing the photos you authorize. Initial indexing can take time and warm your phone; progress is saved. After setup, indexed local photos can be searched offline. Originals stored only in iCloud may still need an internet connection to download.
+
+This first release is free, with no in-app purchases. Results depend on photo content and the model’s interpretation and may not always match your expectations.
+
+supportUrl
+https://huanglizhuo.github.io/PhotoFind/support/
+
+marketingUrl
+https://huanglizhuo.github.io/PhotoFind/
+
+privacyPolicyUrl
+https://huanglizhuo.github.io/PhotoFind/privacy/

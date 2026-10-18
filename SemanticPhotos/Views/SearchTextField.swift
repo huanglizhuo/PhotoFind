@@ -10,6 +10,7 @@ struct SearchTextField: UIViewRepresentable {
     var onEdit: () -> Void
     var onSearch: () -> Void
     var onSubmit: () -> Void
+    var onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -85,13 +86,16 @@ struct SearchTextField: UIViewRepresentable {
         }
 
         @objc func textChanged(_ field: UITextField) {
-            guard !updating else { return }
+            guard !updating, parent.isFocused || field.isFirstResponder else { return }
             let value = field.text ?? ""
             let composing = field.markedTextRange != nil
             guard value != lastText || composing != wasComposing else { return }
+            let sameQuery = TextSearchScheduler.normalized(value) == TextSearchScheduler.normalized(lastText)
+                && composing == wasComposing
             lastText = value
             wasComposing = composing
             parent.text = value
+            guard !sameQuery else { return }
             cancelPendingSearch()
             parent.onEdit()
             guard !composing else { return }
@@ -99,7 +103,8 @@ struct SearchTextField: UIViewRepresentable {
             pending = Task { [weak self, weak field] in
                 try? await Task.sleep(for: SearchTextField.debounceDelay)
                 guard !Task.isCancelled, let self, let field,
-                      field.markedTextRange == nil, field.text == value else { return }
+                      field.markedTextRange == nil,
+                      TextSearchScheduler.normalized(field.text ?? "") == TextSearchScheduler.normalized(value) else { return }
                 self.parent.onSearch()
             }
         }
@@ -109,17 +114,28 @@ struct SearchTextField: UIViewRepresentable {
             if !parent.isFocused { parent.isFocused = true }
         }
         func textFieldDidEndEditing(_ textField: UITextField) {
-            // Resigning during updateUIView can commit marked text; publish after that update.
+            cancelPendingSearch()
+            // A resign can commit IME text. Keep that text, but never schedule a new search.
+            let shouldCancel = parent.isFocused
             if updating {
                 Task { [weak self, weak textField] in
-                    guard let textField, !textField.isFirstResponder else { return }
-                    self?.textChanged(textField)
+                    guard let self, let textField, !textField.isFirstResponder else { return }
+                    self.finishEditing(textField, cancel: shouldCancel)
                 }
             } else {
-                textChanged(textField)
-                parent.isFocused = false
+                finishEditing(textField, cancel: shouldCancel)
             }
         }
+
+        private func finishEditing(_ field: UITextField, cancel: Bool) {
+            lastText = field.text ?? ""
+            wasComposing = false
+            parent.text = lastText
+            parent.isFocused = false
+            // Return/history already set focus false and submitted an explicit request.
+            if cancel { parent.onCancel() }
+        }
+
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
             guard textField.markedTextRange == nil else { return false }
             textChanged(textField)

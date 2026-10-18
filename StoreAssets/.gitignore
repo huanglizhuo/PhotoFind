@@ -1,0 +1,8 @@
+exports/
+editor/public/export-review/
+editor/public/export-review.html
+editor/public/photos/
+editor/public/photo-review.html
+.DS_Store
+photos/
+raw/
