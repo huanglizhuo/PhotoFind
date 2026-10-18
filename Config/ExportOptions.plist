@@ -3,7 +3,13 @@
 <plist version="1.0"><dict>
 <key>method</key><string>app-store-connect</string>
 <key>destination</key><string>export</string>
-<key>signingStyle</key><string>automatic</string>
+<key>signingStyle</key><string>manual</string>
+<key>signingCertificate</key><string>93A4223AB109F4BC046C1E8DD71E0056F3EFC545</string>
+<key>provisioningProfiles</key><dict>
+<key>com.clothpath.mondigital</key><string>PhotoFind App Store</string>
+<key>com.clothpath.mondigital.share</key><string>PhotoFind Share App Store</string>
+<key>com.clothpath.mondigital.downloader</key><string>PhotoFind Downloader App Store</string>
+</dict>
 <key>teamID</key><string>N9Q47Y2LQ4</string>
 <key>manageAppVersionAndBuildNumber</key><false/>
 <key>uploadSymbols</key><true/>

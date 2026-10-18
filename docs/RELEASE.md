@@ -44,12 +44,14 @@ Formal App Store review is intentionally separate from the TestFlight workflow. 
 - `Publish TestFlight`: manually dispatch on main; tests, archives, validates all bundle versions, exports, uploads, waits for processing and adds the exact build to `findImage`.
 - Both jobs serialize through `photofind-mac`; neither runs pull-request code.
 - Runner: `photofind-mac-arm64`, label `photofind`; service directory `~/actions-runner-photofind`.
-- Requires this Mac to be awake, logged in, with its signing keychain unlocked. The existing Apple Distribution identity is reused; no certificate is revoked.
+- Requires this Mac to be awake, logged in, The job unlocks only its dedicated `photofind-ci.keychain-db` using CI_KEYCHAIN_PASSWORD. The existing Apple Distribution identity is reused; no certificate is revoked.
 - Xcode is selected with `DEVELOPER_DIR`. Installed tools: XcodeGen, asc-cli 0.18.6, Python 3, curl.
-- TestFlight environment allows main only and stores ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY. The job uses a temporary private key file and removes it on exit.
+- TestFlight environment allows main only and stores ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY and CI_KEYCHAIN_PASSWORD. The job uses a temporary private key file and removes it on exit.
 - Repository variable PHOTO_FIND_SIMULATOR identifies the dedicated CI simulator. Dependencies/model cache live in `~/Library/Caches/PhotoFindCI`.
 - CI verifies the public model's pinned hash before staging it in the simulator. It tests real text/image inference, unit tests and download-state UI fixtures. This does not prove Apple-hosted delivery.
 - The standalone first-keyboard timing benchmark is explicitly excluded from CI: it requires a prepared library/device and must be measured separately. Unexpected skipped tests fail CI.
 - Source code alone cannot reproduce Apple-hosted downloads in a simulator. Fresh TestFlight/device acceptance remains a separate release gate.
 
 To publish another build: GitHub → Actions → Publish TestFlight → Run workflow → main. The build number is taken from App Store Connect, not manually incremented in several targets. Do not concurrently upload the same marketing version outside this pipeline.
+
+The dedicated keychain contains only the selected distribution identity (expires 25 April 2027). CI downloads the three named PhotoFind App Store profiles, signs manually and verifies get-task-allow is false. Renew the certificate/profiles before expiration. Other apps’ runners and keychains are retained.

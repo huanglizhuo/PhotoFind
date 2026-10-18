@@ -27,6 +27,7 @@ def archive(path, version, number):
         subprocess.run(['codesign', '--verify', '--strict', str(bundle)], check=True)
         entitlements = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(bundle)], stderr=subprocess.DEVNULL))
         assert entitlements.get('com.apple.developer.team-identifier') == 'N9Q47Y2LQ4'
+        assert not entitlements.get('get-task-allow', False), 'Development signing must not ship'
     assert actual == expected, actual
     assert not list(app.rglob('*.litertlm')), 'Model must be delivered by Background Assets'
     privacy = plistlib.loads((app / 'PrivacyInfo.xcprivacy').read_bytes())

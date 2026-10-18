@@ -40,7 +40,7 @@ xcodebuild -project SemanticPhotos.xcodeproj -scheme SemanticPhotos \
 python3 Tools/release_checks.py tests "build/Tests-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}.xcresult"
 [[ "$mode" == release ]] || exit 0
 
-: "${ASC_KEY_ID:?}" "${ASC_ISSUER_ID:?}" "${ASC_PRIVATE_KEY:?}"
+: "${ASC_KEY_ID:?}" "${ASC_ISSUER_ID:?}" "${ASC_PRIVATE_KEY:?}" "${CI_KEYCHAIN_PASSWORD:?}"
 umask 077
 auth_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/photofind-auth.XXXXXX")
 trap 'rm -rf "$auth_dir"' EXIT
@@ -57,6 +57,33 @@ data = json.load(open(sys.argv[1]))
 text = json.dumps(data)
 assert os.environ['ASC_KEY_ID'] in text and 'environment' in text, 'Unexpected ASC credentials'
 PY
+asc_ci profiles list --type IOS_APP_STORE > "$auth_dir/profiles.json"
+python3 - "$auth_dir/profiles.json" <<'PY'
+import base64, json, os, pathlib, subprocess
+import sys
+keychain = str(pathlib.Path.home() / 'Library/Keychains/photofind-ci.keychain-db')
+subprocess.run(['security', 'unlock-keychain', '-p', os.environ['CI_KEYCHAIN_PASSWORD'], keychain], check=True, capture_output=True)
+profiles = pathlib.Path.home() / 'Library/Developer/Xcode/UserData/Provisioning Profiles'
+profiles.mkdir(parents=True, exist_ok=True)
+expected = {'PhotoFind App Store': 'TJGTSMJT2W', 'PhotoFind Share App Store': '44VF4NZK55', 'PhotoFind Downloader App Store': '8H7U5B5RPQ'}
+found = set()
+for p in json.load(open(sys.argv[1]))['data']:
+    if p['name'] not in expected:
+        continue
+    assert p['bundleIdId'] == expected[p['name']] and p['profileState'] == 'ACTIVE', 'Invalid signing profile'
+    (profiles / (p['id'] + '.mobileprovision')).write_bytes(base64.b64decode(p['profileContent'], validate=True))
+    found.add(p['name'])
+assert found == set(expected), 'Missing PhotoFind distribution profiles'
+PY
+unset CI_KEYCHAIN_PASSWORD
+# CI signing is explicit; the normal development project keeps automatic signing.
+ruby -ryaml -rjson -e '
+spec = YAML.load_file("project.yml")
+{"SemanticPhotos" => "PhotoFind App Store", "SemanticPhotosShare" => "PhotoFind Share App Store", "SemanticPhotosDownloader" => "PhotoFind Downloader App Store"}.each do |target, profile|
+  spec["targets"][target]["settings"]["base"].merge!({"CODE_SIGN_STYLE" => "Manual", "CODE_SIGN_IDENTITY" => "93A4223AB109F4BC046C1E8DD71E0056F3EFC545", "PROVISIONING_PROFILE_SPECIFIER" => profile})
+end
+File.write("build/ci-project.json", JSON.generate(spec))'
+xcodegen generate --spec build/ci-project.json --project-root . --project .
 version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' build/CI/Build/Products/Debug-iphonesimulator/SemanticPhotos.app/Info.plist)
 build_number=$(asc_ci builds next-number --app-id 6823997811 --version "$version" --platform ios)
 [[ "$build_number" =~ ^[0-9]+$ ]] || { echo 'Invalid next build number'; exit 1; }
