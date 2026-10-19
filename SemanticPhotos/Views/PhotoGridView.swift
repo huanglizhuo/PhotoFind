@@ -218,6 +218,12 @@ struct GridState {
     var dates: [String: Date]
 }
 
+/// Kept by an exploration page while its collection view is off the navigation stack.
+@MainActor final class PhotoGridPosition {
+    var offset: CGPoint = .zero
+    var columns: CGFloat = 3
+}
+
 struct PhotoCollection: UIViewRepresentable {
     let model: AppModel
     let state: GridState
@@ -230,20 +236,31 @@ struct PhotoCollection: UIViewRepresentable {
     /// An independent grid starts at this density without changing the library's saved zoom.
     var initialColumns: Int? = nil
     var onVisibleIndex: ((Int) -> Void)? = nil
+    var position: PhotoGridPosition? = nil
+    var hasMore = false
+    var onLoadMore: (() -> Void)? = nil
 
-    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model, initialColumns: initialColumns) }
+    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model, initialColumns: initialColumns, position: position) }
 
     func makeUIView(context: Context) -> UICollectionView { context.coordinator.collectionView }
 
     func updateUIView(_ view: UICollectionView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.onSelect = onSelect
+        coordinator.onSelect = { [weak coordinator] id in
+            coordinator?.savePosition()
+            onSelect(id)
+        }
         coordinator.onMonth = onMonth
         coordinator.onScrolling = onScrolling
         coordinator.onVisibleIndex = onVisibleIndex
+        coordinator.collectionView.configureLoadMore(hasMore: hasMore, action: onLoadMore)
         coordinator.update(state)
         view.accessibilityIdentifier = accessibilityID
         coordinator.scroll(to: scrollToID, request: scrollRequest)
+    }
+
+    static func dismantleUIView(_ view: UICollectionView, coordinator: GridCoordinator) {
+        coordinator.savePosition()
     }
 }
 
@@ -253,6 +270,14 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     var onVisibleIndex: ((Int) -> Void)?
     private var lastVisibleIndex: Int?
     private let savesColumns: Bool
+    private let position: PhotoGridPosition?
+    private var needsPositionRestore: Bool
+
+    func savePosition() {
+        guard !needsPositionRestore else { return }
+        position?.offset = collectionView.contentOffset
+        position?.columns = layout.columns
+    }
 
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
     private var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
@@ -300,9 +325,12 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     private var snapTo: CGFloat = 0
     private var snapStart: CFTimeInterval = 0
 
-    init(model: AppModel, initialColumns: Int? = nil) {
+    init(model: AppModel, initialColumns: Int? = nil, position: PhotoGridPosition? = nil) {
         savesColumns = initialColumns == nil
+        self.position = position
+        needsPositionRestore = position != nil
         super.init(model: model, columns: initialColumns ?? model.gridColumns)
+        if let position { layout.columns = position.columns }
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched)))
         let registration = UICollectionView.CellRegistration<PhotoCell, String> { [unowned self] cell, indexPath, id in
@@ -334,7 +362,14 @@ final class GridCoordinator: ThumbnailGridCoordinator {
                 ? visible.flatMap { dataSource.itemIdentifier(for: $0) } : nil
             let offset = visible.map { collectionView.contentOffset.y - layout.frame(at: $0.item).minY } ?? 0
             dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
-                guard let self, self.snapshotVersion == version, let anchorID,
+                guard let self, self.snapshotVersion == version else { return }
+                if self.needsPositionRestore, let position = self.position {
+                    self.collectionView.layoutIfNeeded()
+                    self.collectionView.setContentOffset(position.offset, animated: false)
+                    self.needsPositionRestore = false
+                    return
+                }
+                guard let anchorID,
                       let path = self.dataSource.indexPath(for: anchorID) else { return }
                 self.collectionView.layoutIfNeeded()
                 self.collectionView.contentOffset.y = self.layout.frame(at: path.item).minY + offset
@@ -409,6 +444,7 @@ final class GridCoordinator: ThumbnailGridCoordinator {
 
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
         super.scrollViewDidScroll(scrollView)
+        collectionView.updatePull(isDragging: scrollView.isDragging)
         guard !state.isSearch, !state.ids.isEmpty, scrollView.isTracking || scrollView.isDecelerating else { return }
         let top = CGPoint(x: 1, y: scrollView.contentOffset.y + scrollView.adjustedContentInset.top + 1)
         let index = layout.index(at: top)
@@ -434,6 +470,7 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     }
 
     override func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        collectionView.finishPull(cancelled: scrollView.panGestureRecognizer.state == .cancelled)
         if !decelerate { onScrolling(false) }
     }
 
@@ -535,12 +572,87 @@ private final class DividerView: UICollectionReusableView {
 
 // MARK: - Grid plumbing
 
+/// The footer is opt-in; library and search grids keep their existing scrolling behavior.
+final class PhotoGridCollectionView: UICollectionView {
+    static let loadMoreThreshold: CGFloat = 72
+    private(set) var isLoadMoreArmed = false
+    private var canLoadMore = false
+    private var loadMore: (() -> Void)?
+    private var loadMoreLabel: UILabel?
+    private let pullText = String(localized: "上拉加载更多相似照片")
+    private let releaseText = String(localized: "松手加载更多")
+    private let endText = String(localized: "没有更多相关照片了")
+
+    func configureLoadMore(hasMore: Bool, action: (() -> Void)?) {
+        canLoadMore = hasMore
+        loadMore = action
+        guard action != nil else { return }
+        if loadMoreLabel == nil {
+            let label = UILabel()
+            label.textColor = .secondaryLabel
+            label.textAlignment = .center
+            label.numberOfLines = 0
+            label.adjustsFontForContentSizeCategory = true
+            label.accessibilityIdentifier = "relatedPhotosLoadMore"
+            addSubview(label)
+            loadMoreLabel = label
+        }
+        if !hasMore { isLoadMoreArmed = false }
+        loadMoreLabel?.accessibilityCustomActions = hasMore ? [
+            UIAccessibilityCustomAction(name: String(localized: "加载更多相似照片")) { [weak self] _ in
+                guard let self, self.canLoadMore else { return false }
+                self.loadMore?()
+                return true
+            }
+        ] : nil
+        updateFooterText()
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let label = loadMoreLabel else { return }
+        label.font = .preferredFont(forTextStyle: .footnote)
+        let width = max(1, bounds.width - 32)
+        // Keep the threshold stationary when the release prompt wraps to fewer lines.
+        let height = [pullText, releaseText, endText].map { text in
+            label.text = text
+            return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        }.max() ?? 0
+        updateFooterText()
+        let footerHeight = max(52, height + 24)
+        if contentInset.bottom != footerHeight { contentInset.bottom = footerHeight }
+        let y = max(contentSize.height, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
+        label.frame = CGRect(x: 16, y: y + 12, width: width, height: height)
+    }
+
+    func updatePull(isDragging: Bool) {
+        guard loadMore != nil else { return }
+        let bottom = max(-adjustedContentInset.top,
+                         contentSize.height - bounds.height + adjustedContentInset.bottom)
+        isLoadMoreArmed = canLoadMore && isDragging && contentOffset.y - bottom >= Self.loadMoreThreshold
+        updateFooterText()
+    }
+
+    func finishPull(cancelled: Bool) {
+        let shouldLoad = isLoadMoreArmed && canLoadMore && !cancelled
+        isLoadMoreArmed = false
+        updateFooterText()
+        if shouldLoad { loadMore?() }
+    }
+
+    private func updateFooterText() {
+        loadMoreLabel?.text = !canLoadMore ? endText : isLoadMoreArmed ? releaseText : pullText
+    }
+}
+
+
 /// Collection-view plumbing for the photo grid: thumbnail requests and
 /// PHCachingImageManager prefetching (F3.3), and holding embedding while the
 /// user scrolls. The coordinator owns the data and maps index paths to assets.
 @MainActor
 class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
-    let collectionView: UICollectionView
+    let collectionView: PhotoGridCollectionView
     let layout = ZoomGridLayout()
     let model: AppModel
     /// Tapped photo's id. Handled here because UIKit never sees optional
@@ -559,7 +671,7 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
     init(model: AppModel, columns: Int) {
         self.model = model
         layout.columns = CGFloat(columns)
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView = PhotoGridCollectionView(frame: .zero, collectionViewLayout: layout)
         super.init()
         collectionView.delegate = self
         collectionView.prefetchDataSource = self

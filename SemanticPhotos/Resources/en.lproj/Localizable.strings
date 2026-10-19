@@ -369,3 +369,27 @@
 "黑白灰" = "Grayscale";
 "隐私政策" = "Privacy Policy";
 "帮助与反馈" = "Help and Feedback";
+
+/* Photo exploration */
+"探索相关" = "Explore Related";
+"探索相关照片" = "Explore Related Photos";
+"上滑探索相关照片" = "Swipe up to explore related photos";
+"返回相关照片" = "Back to Related Photos";
+"收起探索" = "Close Exploration";
+"展开或收起面板" = "Expand or Collapse Panel";
+"参照照片" = "Reference Photo";
+"与这张照片相似" = "Similar to This Photo";
+"正在已分析的照片中查找" = "Searching photos analyzed so far";
+"全部已分析且可访问的照片" = "All analyzed photos you allow access to";
+"正在查找相关照片…" = "Finding related photos…";
+"暂未找到明显相似的照片" = "No close matches yet";
+"这张照片需要先分析" = "This photo needs to be analyzed first";
+"分析完成后，重试查找相关照片。" = "Try again after this photo has been analyzed.";
+"分析这张照片" = "Analyze This Photo";
+"照片已不可访问" = "This photo is no longer available";
+"暂时无法查找相关照片" = "Couldn’t find related photos";
+
+"上拉加载更多相似照片" = "Scroll up to load more similar matches";
+"松手加载更多" = "Release to load more";
+"没有更多相关照片了" = "No more related photos";
+"加载更多相似照片" = "Load more similar matches";

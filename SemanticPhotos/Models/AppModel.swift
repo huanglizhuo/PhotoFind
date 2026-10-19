@@ -727,28 +727,33 @@ final class AppModel {
     }
 
     /// F4.9: the photo's stored vector is the query, so no inference runs.
-    func showSimilar(to id: String) {
-        guard isModelReady else { return }
-        cancelPendingSearchInput()
-        searchError = nil
-        searchFilter = SearchFilter()
-        searchTask?.cancel()
-        isImageSearching = true
-        searchTask = Task { [weak self] in
-            guard let self else { return }
-            defer { if !Task.isCancelled { self.isImageSearching = false } }
-            guard let vector = try? await self.store.vector(for: id),
-                  let rows = try? await self.store.searchRows(includeText: false) else { return }
-            guard var hits = try? await SearchEngine.rank(query: vector, rows: rows,
-                                                         k: Self.maxRankedResults),
-                  !Task.isCancelled else { return }
-            // The photo itself always leads (score ≈ 1).
-            if let seed = hits.firstIndex(where: { $0.id == id }), seed != 0 {
-                hits.insert(hits.remove(at: seed), at: 0)
-            }
-            self.searchText = ""
-            self.show(hits, title: String(localized: "相似照片"), seed: id)
+    func relatedPhotos(to id: String) async throws -> [SearchEngine.Hit] {
+        guard let seed = photo(id), photoService.asset(for: id)?.isHidden == false else {
+            throw RelatedPhotosError.unavailable
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitestRelatedPhotosFailure") {
+            throw CocoaError(.fileReadUnknown)
+        }
+        #endif
+        let hits = try await SearchEngine.related(to: id, store: store, allowedIDs: Set(library.ids), k: Self.maxRankedResults)
+        try Task.checkCancellation()
+        guard let current = photo(id), let asset = photoService.asset(for: id), !asset.isHidden,
+              ColoredPhoto.sameVersion(current.modificationDate, seed.modificationDate),
+              ColoredPhoto.sameVersion(seed.modificationDate, asset.modificationDate) else {
+            throw RelatedPhotosError.unavailable
+        }
+        let assets = photoService.assetsMap(for: hits.map(\.id))
+        let accessible = hits.filter { hit in
+            guard let photo = photo(hit.id), let asset = assets[hit.id], !asset.isHidden else { return false }
+            return ColoredPhoto.sameVersion(photo.modificationDate, asset.modificationDate)
+        }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitestRelatedPhotosWeakOnly") {
+            return accessible.prefix(6).map { .init(id: $0.id, score: 0.4, textMatch: false) }
+        }
+        #endif
+        return accessible
     }
 
     /// F6.3: an image shared from another app; embedding happens here, not in

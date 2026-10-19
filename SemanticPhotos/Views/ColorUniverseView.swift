@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ColorUniverseView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var universe = ColorUniverseModel()
@@ -13,7 +12,6 @@ struct ColorUniverseView: View {
     @State private var isSeekingColor = false
     @State private var retry = 0
     @State private var detail: Detail?
-    @State private var returnToSearch = false
     @State private var controlsExpanded = true
     @State private var selection: Set<String>?
     @State private var shareRequest: PhotoShareRequest?
@@ -104,10 +102,8 @@ struct ColorUniverseView: View {
             .alert(String(localized: "操作结果"), isPresented: Binding(get: { actionMessage != nil }, set: { if !$0 { actionMessage = nil } })) {
                 Button(String(localized: "好")) { actionMessage = nil }
             } message: { Text(actionMessage ?? "") }
-            .fullScreenCover(item: $detail, onDismiss: {
-                if returnToSearch { dismiss() }
-            }) { item in
-                DetailView(startID: item.id, photoIDs: item.ids, onFindSimilar: { returnToSearch = true })
+            .fullScreenCover(item: $detail) { item in
+                DetailView(startID: item.id, photoIDs: item.ids)
             }
         }
     }

@@ -14,6 +14,16 @@ enum SearchEngine {
     /// were this much more similar (F4.12).
     static let textBoost: Float = 0.3
 
+    /// Image exploration uses only stored vectors and the caller's authorized library snapshot.
+    static func related(to id: String, store: EmbeddingStore, allowedIDs: Set<String>, k: Int) async throws -> [Hit] {
+        try Task.checkCancellation()
+        guard allowedIDs.contains(id) else { throw RelatedPhotosError.unavailable }
+        guard let query = try await store.vector(for: id), !query.isEmpty else { throw RelatedPhotosError.notIndexed }
+        let rows = try await store.searchRows(includeText: false)
+        return try await rank(query: query,
+                              rows: rows.filter { $0.id != id && allowedIDs.contains($0.id) && $0.vector.count == query.count }, k: k)
+    }
+
     /// Top-K by score, never cut off (F4.3); the caller places the
     /// "相关度较低" divider.
     @concurrent

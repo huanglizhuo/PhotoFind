@@ -84,7 +84,7 @@ final class SemanticPhotosUITests: XCTestCase {
         guard searchField.waitForExistence(timeout: 10) else { throw XCTSkip("搜索框未出现") }
     }
 
-    private var detailOpen: Bool { app.buttons["关闭"].exists && app.buttons["相似"].exists }
+    private var detailOpen: Bool { app.buttons["关闭"].exists && app.buttons["exploreRelatedPhotos"].exists }
 
     private func columns() -> Int {
         let rows = Dictionary(grouping: grid.cells.allElementsBoundByIndex.map { Int($0.frame.minY.rounded()) }, by: { $0 })
@@ -251,16 +251,230 @@ final class SemanticPhotosUITests: XCTestCase {
 
     func testDetailShowsActionsAndFindsSimilar() throws {
         try pauseIndexingForUITest()
-        try requireModel()
-        grid.cells.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["分享"].exists)
+        let origin = grid.cells.firstMatch.identifier
+        grid.cells.firstMatch.tap()
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["photoDetailMore"].exists)
-        app.buttons["相似"].tap()
-        // F4.9: results replace the grid, titled 相似照片, with the clear button.
-        XCTAssertTrue(app.buttons["closeSearch"].waitForExistence(timeout: 10))
-        XCTAssertEqual(searchField.placeholderValue, "相似照片")
-        app.buttons["closeSearch"].tap()
+        let seed = detailImage.identifier.replacingOccurrences(of: "photoDetailImage-", with: "")
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
+        showRelatedResults()
+        XCTAssertFalse(relatedGrid.cells["photoCell-" + seed].exists)
+        XCTAssertFalse(app.staticTexts["similarityScore"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "lens-half-sheet"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["closePhotoExploration"].tap()
+        XCTAssertTrue(app.buttons["closePhotoDetail"].waitForExistence(timeout: 5))
+        app.buttons["closePhotoDetail"].tap()
+        XCTAssertEqual(grid.cells.firstMatch.identifier, origin)
+        XCTAssertFalse(app.buttons["closeSearch"].exists)
+    }
+
+    private var relatedGrid: XCUIElement { app.collectionViews["relatedPhotoGrid"] }
+
+    private func showRelatedResults() {
+        XCTAssertTrue(app.otherElements["relatedPhotosLoading"].waitForNonExistence(timeout: 15))
+        if !relatedGrid.cells.firstMatch.waitForExistence(timeout: 5) {
+            if app.buttons["expandPhotoExploration"].exists { app.buttons["expandPhotoExploration"].tap() }
+            pullUpRelatedResults()
+        }
+        XCTAssertTrue(relatedGrid.cells.firstMatch.waitForExistence(timeout: 10))
+    }
+
+    private func pullUpRelatedResults(distance: CGFloat = 380) {
+        let start = relatedGrid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        start.press(forDuration: 0.1,
+                    thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
+                    withVelocity: .slow, thenHoldForDuration: 0.2)
+    }
+
+    func testExplorationPullUpFromEmptyResultsAndStopsAtEnd() throws {
+        try pauseIndexingForUITest(arguments: ["-uitestRelatedPhotosWeakOnly"])
+        grid.cells.firstMatch.tap()
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(relatedGrid.waitForExistence(timeout: 15))
+        app.buttons["expandPhotoExploration"].tap()
+        let footer = app.staticTexts["relatedPhotosLoadMore"]
+        XCTAssertTrue(footer.waitForExistence(timeout: 5))
+        XCTAssertEqual(footer.label, "上拉加载更多相似照片")
+        XCTAssertFalse(app.buttons["moreRelatedPhotos"].exists)
+        XCTAssertEqual(relatedGrid.cells.count, 0)
+        pullUpRelatedResults(distance: 50)
+        XCTAssertEqual(relatedGrid.cells.count, 0)
+        XCTAssertEqual(footer.label, "上拉加载更多相似照片")
+        let empty = XCTAttachment(screenshot: app.screenshot())
+        empty.name = "lens-pull-up-empty"
+        empty.lifetime = .keepAlways
+        add(empty)
+        pullUpRelatedResults()
+        XCTAssertTrue(relatedGrid.cells.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(relatedGrid.cells.count, 6)
+        XCTAssertEqual(footer.label, "没有更多相关照片了")
+        pullUpRelatedResults()
+        XCTAssertEqual(relatedGrid.cells.count, 6)
+        let loaded = XCTAttachment(screenshot: app.screenshot())
+        loaded.name = "lens-pull-up-loaded"
+        loaded.lifetime = .keepAlways
+        add(loaded)
+    }
+
+    func testExplorationSwipeZoomAndContinuousBacktracking() throws {
+        try pauseIndexingForUITest()
+        grid.cells.firstMatch.tap()
+        XCTAssertTrue(detailImage.waitForExistence(timeout: 15))
+        let seedA = detailImage.identifier
+        detailImage.doubleTap()
+        detailImage.swipeUp()
+        XCTAssertFalse(app.buttons["closePhotoExploration"].exists)
+        XCTAssertEqual(detailImage.value as? String, "已放大")
+        detailImage.doubleTap()
+        let start = detailImage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -50)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertFalse(app.buttons["closePhotoExploration"].exists)
+        detailImage.swipeUp()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
+        showRelatedResults()
+        app.buttons["expandPhotoExploration"].tap()
+        relatedGrid.swipeUp()
+        let first = try XCTUnwrap(relatedGrid.cells.allElementsBoundByIndex.first(where: \.isHittable))
+        let firstID = first.identifier
+        let firstY = first.frame.minY
+        first.tap()
+        XCTAssertTrue(app.buttons["backToRelatedPhotos"].waitForExistence(timeout: 5))
+        XCTAssertNotEqual(detailImage.identifier, seedA)
+        let seedB = detailImage.identifier
+        app.buttons["exploreRelatedPhotos"].tap()
+        showRelatedResults()
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "lens-continuous-exploration"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.navigationBars["探索相关照片"].buttons["BackButton"].tap()
+        XCTAssertTrue(app.buttons["backToRelatedPhotos"].waitForExistence(timeout: 5))
+        XCTAssertEqual(detailImage.identifier, seedB)
+        app.buttons["backToRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
+        XCTAssertEqual(relatedGrid.cells.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, firstID)
+        XCTAssertEqual(relatedGrid.cells[firstID].frame.minY, firstY, accuracy: 3)
+        app.buttons["closePhotoExploration"].tap()
+        XCTAssertEqual(detailImage.identifier, seedA)
+        detailImage.swipeLeft()
+        XCTAssertNotEqual(detailImage.identifier, seedA)
+        app.buttons["closePhotoDetail"].tap()
+    }
+
+    func testExplorationFailureIsRetryableWithoutChangingSearch() throws {
+        try pauseIndexingForUITest(arguments: ["-uitestRelatedPhotosFailure"])
+        grid.cells.firstMatch.tap()
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["retryRelatedPhotos"].waitForExistence(timeout: 10))
+        app.buttons["retryRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["retryRelatedPhotos"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["暂未找到明显相似的照片"].exists)
+        app.buttons["closePhotoExploration"].tap()
+        app.buttons["closePhotoDetail"].tap()
+        XCTAssertTrue(grid.exists)
+        XCTAssertFalse(app.buttons["closeSearch"].exists)
+    }
+
+    func testExplorationPreservesColorUniversePosition() throws {
+        try pauseIndexingForUITest()
+        app.buttons["openColorUniverse"].tap()
+        let colors = app.collectionViews["colorPhotoGrid"]
+        XCTAssertTrue(app.staticTexts["colorIndexComplete"].waitForExistence(timeout: 120))
+        colors.swipeUp()
+        colors.swipeUp()
+        let first = try XCTUnwrap(colors.cells.allElementsBoundByIndex.first(where: \.isHittable))
+        let firstID = first.identifier
+        let firstY = first.frame.minY
+        let color = app.staticTexts["selectedColorName"].label
+        first.tap()
+        app.buttons["exploreRelatedPhotos"].tap()
+        showRelatedResults()
+        app.buttons["closePhotoExploration"].tap()
+        app.buttons["closePhotoDetail"].tap()
+        XCTAssertTrue(colors.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["selectedColorName"].label, color)
+        XCTAssertEqual(colors.cells.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, firstID)
+        XCTAssertEqual(colors.cells[firstID].frame.minY, firstY, accuracy: 3)
+    }
+
+    func testExplorationPreservesSearchAndPosition() throws {
+        try pauseIndexingForUITest()
+        showTextSearchResults()
+        grid.swipeUp()
+        let first = try XCTUnwrap(grid.cells.allElementsBoundByIndex.first(where: \.isHittable))
+        let id = first.identifier
+        let y = first.frame.minY
+        let query = searchField.value as? String
+        first.tap()
+        app.buttons["exploreRelatedPhotos"].tap()
+        showRelatedResults()
+        app.buttons["closePhotoExploration"].tap()
+        app.buttons["closePhotoDetail"].tap()
+        XCTAssertEqual(searchField.value as? String, query)
+        XCTAssertTrue(app.buttons["closeSearch"].exists)
+        XCTAssertEqual(grid.cells.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, id)
+        XCTAssertEqual(grid.cells[id].frame.minY, y, accuracy: 3)
+    }
+
+    func testExplorationEnglishLargeTextAndUnavailableOriginal() throws {
+        app.terminate()
+        app.launchArguments = ["-uitestPauseIndexing", "-uitestDetailImageUnavailable", "-uitestRelatedPhotosWeakOnly",
+                               "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        try requireIndexedPhotos()
+        grid.cells.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Photos Temporarily Unavailable"].waitForExistence(timeout: 10))
+        app.buttons["exploreRelatedPhotos"].tap()
+        let footer = app.staticTexts["relatedPhotosLoadMore"]
+        XCTAssertTrue(footer.waitForExistence(timeout: 15))
+        XCTAssertTrue(footer.isHittable)
+        XCTAssertEqual(footer.label, "Scroll up to load more similar matches")
+        let empty = XCTAttachment(screenshot: app.screenshot())
+        empty.name = "lens-pull-up-english-large-text"
+        empty.lifetime = .keepAlways
+        add(empty)
+        showRelatedResults()
+        XCTAssertTrue(app.navigationBars["Explore Related Photos"].exists)
+        XCTAssertTrue(app.buttons["closePhotoExploration"].isHittable)
+        XCTAssertTrue(relatedGrid.cells.firstMatch.isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "lens-english-large-text"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["closePhotoExploration"].tap()
+        XCTAssertTrue(app.buttons["closePhotoDetail"].waitForExistence(timeout: 5))
+    }
+
+    func testExplorationPullDownOnlyClosesPanel() throws {
+        try pauseIndexingForUITest()
+        grid.cells.firstMatch.tap()
+        let seed = detailImage.identifier
+        detailImage.swipeUp()
+        showRelatedResults()
+        let bar = app.navigationBars["探索相关照片"]
+        let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.15))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 350)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["closePhotoDetail"].exists)
+        XCTAssertEqual(detailImage.identifier, seed)
+    }
+
+    private func showTextSearchResults() {
+        search("风景")
+        if !grid.cells.firstMatch.waitForExistence(timeout: 30) {
+            let more = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '查看 '")).firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 5))
+            more.tap()
+        }
+        if app.keyboards.firstMatch.exists {
+            app.navigationBars.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(grid.cells.firstMatch.waitForExistence(timeout: 10))
     }
 
     private var detailImage: XCUIElement {
@@ -337,7 +551,7 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["重试未完成的照片"].tap()
         XCTAssertTrue(app.staticTexts["已准备 0/1 张照片"].waitForExistence(timeout: 10))
         app.navigationBars["分享照片"].buttons["关闭"].tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
     }
 
     func testSearchFiltersExposeScopeAndCanClear() throws {
@@ -470,7 +684,7 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         XCTAssertFalse(detailOpen, "首次点击照片只收起输入")
         middleCell().tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
     }
 
     func testSearchShowsResultsAndClears() throws {
@@ -531,7 +745,7 @@ final class SemanticPhotosUITests: XCTestCase {
                 let tapY = cell.frame.minY + cell.frame.height * 0.25
                 guard tapY > chromeTop, tapY < chromeBottom else { continue }
                 cell.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
-                XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
                 let found = place.exists
                 app.buttons["关闭"].tap()
                 if found { return }
@@ -662,9 +876,7 @@ final class SemanticPhotosUITests: XCTestCase {
 
     func testSimilarityScoreAppearsAtTopLeft() throws {
         try pauseIndexingForUITest()
-        grid.cells.element(boundBy: 0).tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        app.buttons["相似"].tap()
+        showTextSearchResults()
         XCTAssertTrue(app.buttons["closeSearch"].waitForExistence(timeout: 15))
         if !grid.cells.firstMatch.waitForExistence(timeout: 5) {
             app.buttons.matching(NSPredicate(format: "label BEGINSWITH '查看 '")).firstMatch.tap()
@@ -690,8 +902,7 @@ final class SemanticPhotosUITests: XCTestCase {
         if toggle.value as? String != "1" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap() }
         XCTAssertFalse(app.buttons["完成"].exists)
         app.buttons["closeAbout"].tap()
-        grid.cells.firstMatch.tap()
-        app.buttons["相似"].tap()
+        showTextSearchResults()
         XCTAssertTrue(app.staticTexts["similarityScore"].firstMatch.waitForExistence(timeout: 10))
 
         app.buttons["关于"].tap()
@@ -704,7 +915,7 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["closeAbout"].tap()
         XCTAssertTrue(app.staticTexts["similarityScore"].firstMatch.waitForNonExistence(timeout: 5))
         grid.cells.firstMatch.tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["detailSimilarityScore"].exists)
         app.buttons["关闭"].tap()
         app.terminate()
@@ -716,8 +927,7 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertEqual(toggle.value as? String, "0")
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
         app.buttons["closeAbout"].tap()
-        grid.cells.firstMatch.tap()
-        app.buttons["相似"].tap()
+        showTextSearchResults()
         XCTAssertTrue(app.staticTexts["similarityScore"].firstMatch.waitForExistence(timeout: 10))
         grid.cells.firstMatch.tap()
         XCTAssertTrue(app.staticTexts["detailSimilarityScore"].waitForExistence(timeout: 5))
@@ -728,9 +938,7 @@ final class SemanticPhotosUITests: XCTestCase {
         grid.swipeUp()
         grid.swipeUp()
         let first = try XCTUnwrap(grid.cells.allElementsBoundByIndex.first { $0.isHittable }).identifier
-        middleCell().tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
-        app.buttons["相似"].tap()
+        showTextSearchResults()
         XCTAssertTrue(app.staticTexts["similarityScore"].firstMatch.waitForExistence(timeout: 10))
         app.buttons["closeSearch"].tap()
         XCTAssertTrue(grid.waitForExistence(timeout: 5))
@@ -738,7 +946,7 @@ final class SemanticPhotosUITests: XCTestCase {
         grid.swipeDown()
         XCTAssertNotEqual(grid.cells.allElementsBoundByIndex.first { $0.isHittable }?.identifier, first)
         middleCell().tap()
-        XCTAssertTrue(app.buttons["相似"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].waitForExistence(timeout: 5))
     }
 
     // MARK: - Onboarding & full-library indexing (F2.1 / F2.8 / F7.2, T11)

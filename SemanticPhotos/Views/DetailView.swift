@@ -4,6 +4,26 @@ import UIKit
 /// Full-screen photo browser (F0.3 / F3.5): page through photos with pinch and
 /// double-tap zoom; capture time and place; share and find similar (F3.5.2).
 struct DetailView: View {
+    let startID: String
+    var photoIDs: [String]? = nil
+    @State private var exploration: PhotoShareRequest?
+
+    var body: some View {
+        NavigationStack {
+            PhotoDetailPage(startID: startID, photoIDs: photoIDs, isPresentingExploration: exploration != nil) { id in
+                exploration = PhotoShareRequest(ids: [id])
+            }
+        }
+        .accessibilityHidden(exploration != nil)
+        .sheet(item: $exploration) { request in
+            RelatedPhotosView(seedID: request.ids[0])
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+/// Shared by the library's full-screen viewer and the exploration navigation stack.
+struct PhotoDetailPage: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var currentID: String
@@ -13,13 +33,18 @@ struct DetailView: View {
     @State private var actionError: String?
     @State private var updatingFavorite = false
     private let photoIDs: [String]?
-    private let onFindSimilar: (() -> Void)?
+    private let isExploring: Bool
+    private let isPresentingExploration: Bool
+    private let onExplore: (String) -> Void
+    @AppStorage("hasOpenedPhotoExploration") private var hasExplored = false
 
-    init(startID: String, photoIDs: [String]? = nil,
-         onFindSimilar: (() -> Void)? = nil) {
+    init(startID: String, photoIDs: [String]? = nil, isExploring: Bool = false, isPresentingExploration: Bool = false,
+         onExplore: @escaping (String) -> Void) {
         _currentID = State(initialValue: startID)
         self.photoIDs = photoIDs
-        self.onFindSimilar = onFindSimilar
+        self.isExploring = isExploring
+        self.isPresentingExploration = isPresentingExploration
+        self.onExplore = onExplore
     }
 
     private var items: [IndexedPhoto] {
@@ -35,23 +60,25 @@ struct DetailView: View {
         let pages = items
         let currentIndex = pages.firstIndex { $0.id == currentID } ?? 0
         let nearbyIDs = Set(pages[max(0, currentIndex - 1)..<min(pages.count, currentIndex + 2)].map(\.id))
-        NavigationStack {
-            ZStack {
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
                 Color.black.ignoresSafeArea()
 
                 TabView(selection: $currentID) {
                     ForEach(pages) { item in
-                        ZoomablePhoto(id: item.id, isActive: nearbyIDs.contains(item.id), onDismiss: { dismiss() })
+                        ZoomablePhoto(id: item.id, isActive: nearbyIDs.contains(item.id),
+                                      onDismiss: { dismiss() }, onExplore: { explore(item.id) })
                             .tag(item.id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: isPresentingExploration ? geometry.size.height * 0.46 : nil)
                 .ignoresSafeArea()
 
                 VStack {
                     Spacer()
 
-                    if let current {
+                    if let current, !isPresentingExploration {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 2) {
                                 if let taken = current.meta.takenAt {
@@ -73,14 +100,13 @@ struct DetailView: View {
                             }
                             Spacer()
                             Button {
-                                model.showSimilar(to: current.id)
-                                onFindSimilar?()
-                                dismiss()
+                                explore(current.id)
                             } label: {
-                                Label(String(localized: "相似"), systemImage: "square.stack.3d.down.right")
+                                Label(String(localized: "探索相关"), systemImage: "chevron.up")
                                     .font(.footnote.weight(.semibold))
                             }
                             .buttonStyle(.glass)
+                            .accessibilityIdentifier("exploreRelatedPhotos")
                         }
                         .font(.footnote)
                         .foregroundStyle(.white)
@@ -89,16 +115,25 @@ struct DetailView: View {
                         .padding(.vertical, 8)
                         .glassEffect(.regular, in: .capsule)
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 24)
+                        if !hasExplored {
+                            Text(String(localized: "上滑探索相关照片"))
+                                .font(.caption).foregroundStyle(.white.opacity(0.7))
+                                .accessibilityIdentifier("explorationHint")
+                        }
                     }
+                    Spacer().frame(height: 24)
                 }
             }
+            .navigationBarBackButtonHidden(isExploring)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: { Label(String(localized: "关闭"), systemImage: "xmark") }
-                        .accessibilityIdentifier("closePhotoDetail")
+                    Button { dismiss() } label: {
+                        Label(isExploring ? String(localized: "返回相关照片") : String(localized: "关闭"),
+                              systemImage: isExploring ? "chevron.left" : "xmark")
+                    }
+                    .accessibilityIdentifier(isExploring ? "backToRelatedPhotos" : "closePhotoDetail")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if let current {
@@ -123,7 +158,11 @@ struct DetailView: View {
                 }
             }
         }
+        .onChange(of: model.library.ids) { _, ids in
+            if !ids.contains(currentID) { dismiss() }
+        }
         .preferredColorScheme(.dark)
+        .accessibilityAction(named: Text(String(localized: "探索相关照片"))) { explore(currentID) }
         .accessibilityAction(.escape) { dismiss() }
         .sheet(item: $shareRequest) { SharePreparationView(ids: $0.ids) }
         .sheet(item: $albumPhoto) { AlbumPickerView(ids: $0.ids) }
@@ -133,6 +172,11 @@ struct DetailView: View {
         } message: { Text(actionError ?? "") }
     }
 
+    private func explore(_ id: String) {
+        guard model.photo(id) != nil else { return }
+        hasExplored = true
+        onExplore(id)
+    }
 }
 
 struct ShareItems: Identifiable {
@@ -158,6 +202,7 @@ private struct ZoomablePhoto: View {
     let id: String
     let isActive: Bool
     let onDismiss: () -> Void
+    let onExplore: () -> Void
     @State private var image: UIImage?
     @State private var loading = false
     @State private var failed = false
@@ -169,7 +214,7 @@ private struct ZoomablePhoto: View {
         GeometryReader { geo in
             ZStack {
                 if let image {
-                    ZoomingImage(id: id, image: image, onDismiss: onDismiss)
+                    ZoomingImage(id: id, image: image, onDismiss: onDismiss, onExplore: onExplore)
                 }
                 if loading || failed {
                     VStack(spacing: 12) {
@@ -215,6 +260,11 @@ private struct ZoomablePhoto: View {
                 failed = full == nil
                 loading = false
             }
+            .onDisappear {
+                // Navigation history keeps the page, but must not keep every full-size image.
+                generation = UUID()
+                image = nil
+            }
         }
     }
 }
@@ -223,8 +273,9 @@ private struct ZoomingImage: UIViewRepresentable {
     let id: String
     let image: UIImage
     let onDismiss: () -> Void
+    let onExplore: () -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss, onExplore: onExplore) }
 
     func makeUIView(context: Context) -> UIScrollView {
         let scrollView = UIScrollView()
@@ -257,13 +308,18 @@ private struct ZoomingImage: UIViewRepresentable {
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.imageView?.image = image
         context.coordinator.onDismiss = onDismiss
+        context.coordinator.onExplore = onExplore
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var imageView: UIImageView?
         var onDismiss: () -> Void
+        var onExplore: () -> Void
 
-        init(onDismiss: @escaping () -> Void) { self.onDismiss = onDismiss }
+        init(onDismiss: @escaping () -> Void, onExplore: @escaping () -> Void) {
+            self.onDismiss = onDismiss
+            self.onExplore = onExplore
+        }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
 
@@ -278,21 +334,23 @@ private struct ZoomingImage: UIViewRepresentable {
                   scrollView.pinchGestureRecognizer?.state != .began,
                   scrollView.pinchGestureRecognizer?.state != .changed else { return false }
             let velocity = pan.velocity(in: scrollView)
-            return velocity.y > abs(velocity.x)
+            return abs(velocity.y) > abs(velocity.x)
         }
 
         @objc func draggedToDismiss(_ pan: UIPanGestureRecognizer) {
             guard let scrollView = pan.view as? UIScrollView else { return }
             // Measure in the stationary parent so moving the photo doesn't change the drag distance.
-            let distance = max(0, pan.translation(in: scrollView.superview).y)
+            let distance = pan.translation(in: scrollView.superview).y
             switch pan.state {
             case .began, .changed:
-                scrollView.transform = CGAffineTransform(translationX: 0, y: distance)
+                scrollView.transform = CGAffineTransform(translationX: 0, y: distance > 0 ? distance : distance * 0.15)
             case .ended:
-                if distance > 100 || (distance > 30 && pan.velocity(in: scrollView.superview).y > 850) {
-                    onDismiss()
-                } else {
-                    restorePosition(scrollView)
+                let action = PhotoDetailSwipe.action(distance: distance, velocity: pan.velocity(in: scrollView.superview).y)
+                restorePosition(scrollView)
+                switch action {
+                case .explore: onExplore()
+                case .dismiss: onDismiss()
+                case nil: break
                 }
             case .cancelled, .failed:
                 restorePosition(scrollView)
