@@ -52,6 +52,9 @@ if CommandLine.arguments.dropFirst().first == "--self-test" {
         print(String(data: data, encoding: .utf8) ?? "")
         exit(1)
     }
-    guard try containsBuild(data, id: build) else { fatalError("Build is not assigned to the expected internal group") }
+    guard try containsBuild(data, id: build) else {
+        print("Build is not yet assigned to the expected internal group")
+        exit(1)
+    }
     print("Verified TestFlight build \(build) in internal group \(group)")
 }

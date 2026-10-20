@@ -434,7 +434,12 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
         showRelatedResults()
         relatedGrid.swipeUp()
-        let first = try XCTUnwrap(relatedPhotos.allElementsBoundByIndex.first(where: \.isHittable))
+        // A clipped thumbnail can be hittable while its center is behind the navigation bar.
+        let visibleTop = app.navigationBars.allElementsBoundByIndex.map(\.frame.maxY).max() ?? relatedGrid.frame.minY
+        let visibleBottom = relatedGrid.frame.maxY
+        let first = try XCTUnwrap(relatedPhotos.allElementsBoundByIndex.first {
+            $0.isHittable && $0.frame.minY >= visibleTop && $0.frame.maxY <= visibleBottom
+        })
         let firstID = first.identifier
         let firstY = first.frame.minY
         first.tap()
@@ -452,7 +457,7 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertEqual(detailImage.identifier, seedB)
         app.buttons["backToRelatedPhotos"].tap()
         XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
-        XCTAssertEqual(relatedPhotos.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, firstID)
+        XCTAssertTrue(relatedPhotos[firstID].isHittable)
         XCTAssertEqual(relatedPhotos[firstID].frame.minY, firstY, accuracy: 3)
         app.buttons["closePhotoExploration"].tap()
         XCTAssertEqual(detailImage.identifier, seedA)
@@ -1089,7 +1094,8 @@ final class SemanticPhotosUITests: XCTestCase {
     func testOnboardingStartsIndexing() throws {
         app.terminate()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-resetIndex", "-allowCloudIndexing", "-photoAccessGranted", "NO"]
+        // A launch-argument default shadows the value saved after granting access.
+        app.launchArguments = ["-resetIndex", "-allowCloudIndexing"]
         app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         XCTAssertTrue(app.buttons["startPhotoIndexing"].waitForExistence(timeout: 10), "未授权时应显示首启页")
