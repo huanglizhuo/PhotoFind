@@ -32,15 +32,62 @@ Verification before release:
 - iPhone SE (3rd generation), iOS 27.0: the development app with the failing
   Background Assets override downloaded and verified the model, then reached
   photo selection. Existing device data was retained; photo access was not granted.
+- The same iPhone was subsequently updated through TestFlight to 1.0 (7). The
+  distribution build opened successfully, reused the verified local model and
+  reached photo selection (`build/r2-testflight7-iphone-ready.jpg`). This is an
+  upgrade/reuse check, not a fresh Apple-hosted download check.
 - Fresh iPad Air 11-inch (M3) simulator, iPadOS 26.5: no injected model or previous
   installation; real download, independent file hash verification and photo
   selection passed. Exact review-device iPadOS 27.0 testing remains unavailable.
 - Full unit suite and model-download UI suite: 112 passed, none failed or skipped
   (`build/R2Fallback-AllUnit.xcresult`). New failure and stall fallback regressions
   failed before the implementation and pass after it.
-- Current working-tree photo detail, grid and similarity changes are included in
-  this release's review. UI regression results and the Actions build/submission
-  identifiers are recorded after the release finishes.
+- The release includes the current photo detail, grid and similarity changes.
+  UI regression exposed test-harness issues: a launch-argument authorization
+  default shadowed the value saved after permission was granted, and the
+  exploration test selected a clipped thumbnail whose center was under the
+  navigation bar. The tests now allow the saved authorization value and select
+  a fully visible thumbnail while still checking restored scroll position. An
+  older search test also expected the retired "找到" summary; it now checks
+  the current searchable-photo coverage text.
+- 42 distinct main-flow UI scenarios passed across the audit runs: 22 in the
+  initial run's log, 18 in `build/R2Fallback-FinalUI.xcresult`, plus the corrected
+  onboarding and search-summary cases in `build/R2Fallback-OnboardingFixed.xcresult`
+  and `build/R2Fallback-SearchSummaryFixed.xcresult`. The latter bundle verifies
+  the sole failure in FinalUI after correcting the obsolete text assertion.
+  These are combined results, not a claim that one full UI suite was green.
+  The initial run was interrupted during the long photo-by-photo place-name
+  scan; its xcresult did not finalize, so its 22 passes are retained in
+  `build/r2-current-ui.log`. The place-name scan and launch-performance benchmarks
+  were not completed in this audit. A separate run on a fixture reset by the
+  onboarding test was abandoned and replaced by the prepared acceptance-library
+  run; missing-fixture failures are not counted as passes.
+
+Release source: `593adb843d4ca38bc30f97cfa66fc2ad2189b753`.
+The self-hosted macOS ARM64 release workflow
+https://github.com/huanglizhuo/PhotoFind/actions/runs/39477505244 succeeded.
+All three shipping bundles passed archive validation. App **1.0 (7)** is
+`VALID`, with membership in the internal `findImage` TestFlight group verified;
+build ID `4e93dedb-73a8-4a8c-a194-5518bdbce46c`. English and Chinese beta notes
+describe the fallback and photo-browsing changes.
+
+Review submission `d9eb0165-f5bb-4105-9fdb-d14630e896e6` includes this app
+version and SemanticPhotosModel v2
+(`5ccad275-bd64-4ea3-8f15-341c338e6912`). The rejected app item was removed from
+the old unresolved submission using `reviewSubmissionItems` PATCH
+`removed: true`; CLI `items remove` uses draft deletion and cannot remove an
+already-submitted item. The old accepted v1 item was not replaced. Review notes
+describe the startup fix and actual test coverage. The release setting was
+found to be `AFTER_APPROVAL` and explicitly restored to `MANUAL` before
+resubmission, matching the release policy recorded below.
+
+Submitted with `asc review-submissions submit` on 21 October 2026. Both the
+submission and app version were independently read back as `WAITING_FOR_REVIEW`;
+the selected build is 7 and release type is `MANUAL`. The submission's two items
+are the app version and asset v2. Receipts are in `build/r2-review-submitted.json`,
+`build/r2-submitted-version.json` and `build/r2-submitted-items.json`.
+Follow-up commits only change tests, CI diagnostics and this record; shipping
+app, configuration and Worker sources still match release commit `593adb8`.
 
 The backup uses a foreground URLSession; an interrupted backup may restart on
 retry. It is subject to the Cloudflare account's Workers availability and limits.

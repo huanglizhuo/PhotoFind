@@ -830,10 +830,8 @@ final class SemanticPhotosUITests: XCTestCase {
         try requireModel()
         search("waterfall")
         XCTAssertTrue(grid.cells.firstMatch.waitForExistence(timeout: 10))
-        // v0.8: the result summary replaces the old always-on divider check.
-        // The divider is conditional (the simulator's six sample photos can all
-        // be waterfalls), so assert the count/coverage line instead.
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '找到 '")).firstMatch
+        // Coverage is present whether all candidates match or a relevance divider is shown.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '可搜索 '")).firstMatch
             .waitForExistence(timeout: 5))
         app.buttons["closeSearch"].tap()
         XCTAssertFalse(app.buttons["closeSearch"].waitForExistence(timeout: 2))
