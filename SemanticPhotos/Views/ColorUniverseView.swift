@@ -102,7 +102,7 @@ struct ColorUniverseView: View {
             .alert(String(localized: "操作结果"), isPresented: Binding(get: { actionMessage != nil }, set: { if !$0 { actionMessage = nil } })) {
                 Button(String(localized: "好")) { actionMessage = nil }
             } message: { Text(actionMessage ?? "") }
-            .fullScreenCover(item: $detail) { item in
+            .sheet(item: $detail) { item in
                 DetailView(startID: item.id, photoIDs: item.ids)
             }
         }

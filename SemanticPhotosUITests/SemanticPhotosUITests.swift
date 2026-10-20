@@ -87,7 +87,9 @@ final class SemanticPhotosUITests: XCTestCase {
     private var detailOpen: Bool { app.buttons["关闭"].exists && app.buttons["exploreRelatedPhotos"].exists }
 
     private func columns() -> Int {
-        let rows = Dictionary(grouping: grid.cells.allElementsBoundByIndex.map { Int($0.frame.minY.rounded()) }, by: { $0 })
+        // Capture one hierarchy; live index queries can outlast a layout transition.
+        guard let snapshot = try? grid.snapshot() else { return 0 }
+        let rows = Dictionary(grouping: snapshot.children.filter { $0.elementType == .cell }.map { Int($0.frame.minY.rounded()) }, by: { $0 })
         return rows.values.map(\.count).max() ?? 0
     }
 
@@ -125,6 +127,10 @@ final class SemanticPhotosUITests: XCTestCase {
                           "滚动进入不同色段后，色环和颜色名称应跟随")
         XCTAssertNotEqual(colors.cells.allElementsBoundByIndex.first { $0.isHittable }?.identifier, firstID)
         colors.pinch(withScale: 2, velocity: 2)
+        let zoomSettled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            colors.cells.firstMatch.frame.width > smallWidth + 3
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [zoomSettled], timeout: 3), .completed)
         XCTAssertGreaterThan(colors.cells.firstMatch.frame.width, smallWidth + 3)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(grid.waitForExistence(timeout: 5))
@@ -229,7 +235,41 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["关闭"].waitForExistence(timeout: 5), "点照片应打开大图")
     }
 
-    func testDetailToolbarMatchesLibraryAndMoreContainsActions() throws {
+    func testGridZoomReversesAndKeepsFocus() throws {
+        try pauseIndexingForUITest()
+        let before = columns()
+        let centre = CGPoint(x: grid.frame.midX, y: grid.frame.midY)
+        let focused = grid.cells.allElementsBoundByIndex.first { $0.frame.contains(centre) } ?? middleCell()
+        let id = focused.identifier
+        if before > 3 {
+            grid.pinch(withScale: 1.7, velocity: 0.7)
+        } else {
+            middleCell().pinch(withScale: 0.6, velocity: -0.7)
+        }
+        Thread.sleep(forTimeInterval: 0.7) // CADisplayLink settling is outside XCTest's animation tracking.
+        let after = columns()
+        XCTAssertNotEqual(after, before)
+        XCTAssertTrue(grid.cells[id].exists, "双指中心附近的照片不能在缩放后丢失")
+        XCTAssertLessThan(abs(grid.cells[id].frame.midY - centre.y), grid.cells[id].frame.height * 2)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "grid-zoom-settled"
+        shot.lifetime = .keepAlways
+        add(shot)
+        if after < before {
+            middleCell().pinch(withScale: 0.6, velocity: -0.7)
+            Thread.sleep(forTimeInterval: 0.7)
+            XCTAssertGreaterThan(columns(), after)
+        } else {
+            grid.pinch(withScale: 1.7, velocity: 0.7)
+            Thread.sleep(forTimeInterval: 0.7)
+            XCTAssertLessThan(columns(), after)
+        }
+        grid.swipeUp()
+        middleCell().tap()
+        XCTAssertTrue(app.buttons["closePhotoDetail"].waitForExistence(timeout: 5))
+    }
+
+    func testDetailPhotosToolbarAndSafeDelete() throws {
         try pauseIndexingForUITest()
         let height = app.buttons["选择"].frame.height
         grid.cells.element(boundBy: 0).tap()
@@ -237,16 +277,72 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         XCTAssertEqual(close.frame.height, height, accuracy: 2)
         XCTAssertEqual(more.frame.height, height, accuracy: 2)
-        XCTAssertFalse(app.buttons["分享"].exists)
+        XCTAssertTrue(app.buttons["sharePhoto"].isHittable)
+        XCTAssertTrue(app.buttons["favoritePhoto"].isHittable)
+        XCTAssertTrue(app.buttons["photoInformation"].isHittable)
+        XCTAssertTrue(app.scrollViews["photoDetailFilmstrip"].exists)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "detail-native-toolbar"
         shot.lifetime = .keepAlways
         add(shot)
+        app.buttons["deletePhoto"].tap()
+        XCTAssertTrue(app.alerts["删除 1 张照片？"].waitForExistence(timeout: 3))
+        app.alerts.buttons["取消"].tap()
+        XCTAssertTrue(detailImage.exists)
         more.tap()
-        XCTAssertTrue(app.buttons["分享"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["加入相簿"].exists)
-        app.buttons["照片信息"].tap()
+        XCTAssertTrue(app.buttons["加入相簿"].waitForExistence(timeout: 3))
+        app.buttons["加入相簿"].tap()
+        XCTAssertTrue(app.navigationBars["加入相簿"].waitForExistence(timeout: 5))
+        app.navigationBars["加入相簿"].buttons["关闭"].tap()
+        app.buttons["photoInformation"].tap()
         XCTAssertTrue(app.navigationBars["照片信息"].waitForExistence(timeout: 3))
+    }
+
+    func testDetailControlsAndFilmstripStayInSync() throws {
+        try pauseIndexingForUITest()
+        grid.cells.firstMatch.tap()
+        XCTAssertTrue(detailImage.waitForExistence(timeout: 10))
+        let firstID = detailImage.identifier
+        detailImage.tap()
+        XCTAssertTrue(app.buttons["sharePhoto"].waitForNonExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["closePhotoDetail"].exists)
+        let immersive = XCTAttachment(screenshot: app.screenshot())
+        immersive.name = "detail-immersive"
+        immersive.lifetime = .keepAlways
+        add(immersive)
+        detailImage.tap()
+        XCTAssertTrue(app.buttons["sharePhoto"].waitForExistence(timeout: 3))
+        let thumbnails = app.scrollViews["photoDetailFilmstrip"].buttons
+        let next = try XCTUnwrap(thumbnails.allElementsBoundByIndex.first {
+            $0.isHittable && $0.identifier != firstID.replacingOccurrences(of: "photoDetailImage-", with: "detailThumbnail-")
+        })
+        let nextID = next.identifier.replacingOccurrences(of: "detailThumbnail-", with: "")
+        next.tap()
+        XCTAssertTrue(app.scrollViews["photoDetailImage-" + nextID].waitForExistence(timeout: 10))
+        XCTAssertTrue(next.isSelected)
+        XCTAssertEqual(detailImage.identifier, "photoDetailImage-" + nextID)
+        detailImage.tap()
+        XCTAssertTrue(app.buttons["sharePhoto"].waitForNonExistence(timeout: 3))
+        detailImage.swipeUp()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.images["explorationSeed-" + nextID].waitForExistence(timeout: 10))
+    }
+
+    func testDetailPhotosDarkAppearance() throws {
+        app.terminate()
+        app.launchArguments += ["-uitestPauseIndexing"]
+        app.launchEnvironment["UITEST_DARK_MODE"] = "1"
+        app.launch()
+        try requireIndexedPhotos()
+        grid.cells.firstMatch.tap()
+        XCTAssertTrue(app.buttons["sharePhoto"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["photoInformation"].isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "detail-photos-dark"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
     }
 
     func testDetailShowsActionsAndFindsSimilar() throws {
@@ -259,10 +355,10 @@ final class SemanticPhotosUITests: XCTestCase {
         app.buttons["exploreRelatedPhotos"].tap()
         XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
         showRelatedResults()
-        XCTAssertFalse(relatedGrid.cells["photoCell-" + seed].exists)
+        XCTAssertFalse(relatedPhotos["photoCell-" + seed].exists)
         XCTAssertFalse(app.staticTexts["similarityScore"].exists)
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "lens-half-sheet"
+        shot.name = "lens-inline-results"
         shot.lifetime = .keepAlways
         add(shot)
         app.buttons["closePhotoExploration"].tap()
@@ -272,15 +368,17 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertFalse(app.buttons["closeSearch"].exists)
     }
 
-    private var relatedGrid: XCUIElement { app.collectionViews["relatedPhotoGrid"] }
+    private var relatedGrid: XCUIElement { app.scrollViews["photoDetailScroll"] }
+    private var relatedPhotos: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'photoCell-'"))
+    }
 
     private func showRelatedResults() {
         XCTAssertTrue(app.otherElements["relatedPhotosLoading"].waitForNonExistence(timeout: 15))
-        if !relatedGrid.cells.firstMatch.waitForExistence(timeout: 5) {
-            if app.buttons["expandPhotoExploration"].exists { app.buttons["expandPhotoExploration"].tap() }
+        if !relatedPhotos.firstMatch.waitForExistence(timeout: 5) {
             pullUpRelatedResults()
         }
-        XCTAssertTrue(relatedGrid.cells.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(relatedPhotos.firstMatch.waitForExistence(timeout: 10))
     }
 
     private func pullUpRelatedResults(distance: CGFloat = 380) {
@@ -295,25 +393,24 @@ final class SemanticPhotosUITests: XCTestCase {
         grid.cells.firstMatch.tap()
         app.buttons["exploreRelatedPhotos"].tap()
         XCTAssertTrue(relatedGrid.waitForExistence(timeout: 15))
-        app.buttons["expandPhotoExploration"].tap()
         let footer = app.staticTexts["relatedPhotosLoadMore"]
         XCTAssertTrue(footer.waitForExistence(timeout: 5))
         XCTAssertEqual(footer.label, "上拉加载更多相似照片")
         XCTAssertFalse(app.buttons["moreRelatedPhotos"].exists)
-        XCTAssertEqual(relatedGrid.cells.count, 0)
+        XCTAssertEqual(relatedPhotos.count, 0)
         pullUpRelatedResults(distance: 50)
-        XCTAssertEqual(relatedGrid.cells.count, 0)
+        XCTAssertEqual(relatedPhotos.count, 0)
         XCTAssertEqual(footer.label, "上拉加载更多相似照片")
         let empty = XCTAttachment(screenshot: app.screenshot())
         empty.name = "lens-pull-up-empty"
         empty.lifetime = .keepAlways
         add(empty)
         pullUpRelatedResults()
-        XCTAssertTrue(relatedGrid.cells.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(relatedGrid.cells.count, 6)
+        XCTAssertTrue(relatedPhotos.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(relatedPhotos.count, 6)
         XCTAssertEqual(footer.label, "没有更多相关照片了")
         pullUpRelatedResults()
-        XCTAssertEqual(relatedGrid.cells.count, 6)
+        XCTAssertEqual(relatedPhotos.count, 6)
         let loaded = XCTAttachment(screenshot: app.screenshot())
         loaded.name = "lens-pull-up-loaded"
         loaded.lifetime = .keepAlways
@@ -332,13 +429,12 @@ final class SemanticPhotosUITests: XCTestCase {
         detailImage.doubleTap()
         let start = detailImage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -50)), withVelocity: .slow, thenHoldForDuration: 0.1)
-        XCTAssertFalse(app.buttons["closePhotoExploration"].exists)
+        // Even a short upward drag now scrolls the same page; there is no presentation threshold.
         detailImage.swipeUp()
         XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
         showRelatedResults()
-        app.buttons["expandPhotoExploration"].tap()
         relatedGrid.swipeUp()
-        let first = try XCTUnwrap(relatedGrid.cells.allElementsBoundByIndex.first(where: \.isHittable))
+        let first = try XCTUnwrap(relatedPhotos.allElementsBoundByIndex.first(where: \.isHittable))
         let firstID = first.identifier
         let firstY = first.frame.minY
         first.tap()
@@ -351,17 +447,22 @@ final class SemanticPhotosUITests: XCTestCase {
         shot.name = "lens-continuous-exploration"
         shot.lifetime = .keepAlways
         add(shot)
-        app.navigationBars["探索相关照片"].buttons["BackButton"].tap()
+        app.buttons["closePhotoExploration"].tap()
         XCTAssertTrue(app.buttons["backToRelatedPhotos"].waitForExistence(timeout: 5))
         XCTAssertEqual(detailImage.identifier, seedB)
         app.buttons["backToRelatedPhotos"].tap()
         XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
-        XCTAssertEqual(relatedGrid.cells.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, firstID)
-        XCTAssertEqual(relatedGrid.cells[firstID].frame.minY, firstY, accuracy: 3)
+        XCTAssertEqual(relatedPhotos.allElementsBoundByIndex.first(where: \.isHittable)?.identifier, firstID)
+        XCTAssertEqual(relatedPhotos[firstID].frame.minY, firstY, accuracy: 3)
         app.buttons["closePhotoExploration"].tap()
         XCTAssertEqual(detailImage.identifier, seedA)
         detailImage.swipeLeft()
         XCTAssertNotEqual(detailImage.identifier, seedA)
+        let seedC = detailImage.identifier.replacingOccurrences(of: "photoDetailImage-", with: "")
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(app.images["explorationSeed-" + seedC].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["closePhotoDetail"].isHittable)
+        XCTAssertFalse(app.buttons["expandPhotoExploration"].exists)
         app.buttons["closePhotoDetail"].tap()
     }
 
@@ -439,9 +540,9 @@ final class SemanticPhotosUITests: XCTestCase {
         empty.lifetime = .keepAlways
         add(empty)
         showRelatedResults()
-        XCTAssertTrue(app.navigationBars["Explore Related Photos"].exists)
+        XCTAssertFalse(app.buttons["expandPhotoExploration"].exists)
         XCTAssertTrue(app.buttons["closePhotoExploration"].isHittable)
-        XCTAssertTrue(relatedGrid.cells.firstMatch.isHittable)
+        XCTAssertTrue(relatedPhotos.firstMatch.isHittable)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "lens-english-large-text"
         shot.lifetime = .keepAlways
@@ -450,18 +551,30 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["closePhotoDetail"].waitForExistence(timeout: 5))
     }
 
-    func testExplorationPullDownOnlyClosesPanel() throws {
-        try pauseIndexingForUITest()
+    func testExplorationPullDownReturnsToPhotoBeforeDismissing() throws {
+        try pauseIndexingForUITest(arguments: ["-uitestRelatedPhotosWeakOnly"])
         grid.cells.firstMatch.tap()
         let seed = detailImage.identifier
-        detailImage.swipeUp()
-        showRelatedResults()
-        let bar = app.navigationBars["探索相关照片"]
-        let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.15))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 350)), withVelocity: .slow, thenHoldForDuration: 0.1)
-        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForNonExistence(timeout: 5))
+        app.buttons["exploreRelatedPhotos"].tap()
+        XCTAssertTrue(app.buttons["closePhotoExploration"].waitForExistence(timeout: 5))
+        // A continuous scroll returns to the photo, without dismissing another sheet.
+        relatedGrid.swipeDown(velocity: .slow)
         XCTAssertTrue(app.buttons["closePhotoDetail"].exists)
         XCTAssertEqual(detailImage.identifier, seed)
+        if app.buttons["closePhotoExploration"].exists {
+            app.buttons["closePhotoExploration"].tap()
+        }
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].isHittable)
+        let start = detailImage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 50)),
+                    withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertTrue(app.buttons["closePhotoDetail"].exists)
+        XCTAssertTrue(app.buttons["exploreRelatedPhotos"].isHittable)
+        let dismissStart = detailImage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        dismissStart.press(forDuration: 0.05, thenDragTo: dismissStart.withOffset(CGVector(dx: 0, dy: 500)),
+                           withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["closePhotoDetail"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(grid.cells.firstMatch.isHittable)
     }
 
     private func showTextSearchResults() {
@@ -502,9 +615,27 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertTrue(app.buttons["关闭"].exists)
         XCTAssertEqual(image.value as? String, "原始大小")
         XCTAssertEqual(image.frame.minY, originalY, accuracy: 2, "短距离拖动后图片应回到原位")
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 220)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        let dismissStart = image.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        dismissStart.press(forDuration: 0.05, thenDragTo: dismissStart.withOffset(CGVector(dx: 0, dy: 500)),
+                           withVelocity: .fast, thenHoldForDuration: 0)
         XCTAssertTrue(app.buttons["关闭"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(grid.exists)
+    }
+
+    func testRelatedPhotoDismissesTheSameSheet() throws {
+        try pauseIndexingForUITest(arguments: ["-uitestRelatedPhotosWeakOnly"])
+        let origin = grid.cells.firstMatch.identifier
+        grid.cells.firstMatch.tap()
+        app.buttons["exploreRelatedPhotos"].tap()
+        showRelatedResults()
+        try XCTUnwrap(relatedPhotos.allElementsBoundByIndex.first(where: \.isHittable)).tap()
+        XCTAssertTrue(app.buttons["backToRelatedPhotos"].waitForExistence(timeout: 5))
+        let start = detailImage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 500)),
+                    withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["backToRelatedPhotos"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(grid.cells.firstMatch.isHittable)
+        XCTAssertEqual(grid.cells.firstMatch.identifier, origin)
     }
 
     func testDetailZoomAndPagingDoNotDismiss() throws {
@@ -516,6 +647,10 @@ final class SemanticPhotosUITests: XCTestCase {
         XCTAssertEqual(image.value as? String, "已放大")
         image.swipeDown()
         XCTAssertTrue(app.buttons["关闭"].exists)
+        XCTAssertEqual(image.value as? String, "已放大")
+        image.doubleTap()
+        XCTAssertEqual(image.value as? String, "原始大小")
+        image.pinch(withScale: 2, velocity: 1)
         XCTAssertEqual(image.value as? String, "已放大")
         image.doubleTap()
         XCTAssertEqual(image.value as? String, "原始大小")
@@ -544,8 +679,7 @@ final class SemanticPhotosUITests: XCTestCase {
     func testShareReadFailureIsVisibleAndRetryable() throws {
         try pauseIndexingForUITest(arguments: ["-uitestShareReadFailure"])
         grid.cells.element(boundBy: 0).tap()
-        app.buttons["photoDetailMore"].tap()
-        app.buttons["分享"].tap()
+        app.buttons["sharePhoto"].tap()
         XCTAssertTrue(app.staticTexts["已准备 0/1 张照片"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["重试未完成的照片"].exists)
         app.buttons["重试未完成的照片"].tap()
@@ -605,9 +739,8 @@ final class SemanticPhotosUITests: XCTestCase {
     func testShareSheetAppears() throws {
         try requireIndexedPhotos()
         grid.cells.element(boundBy: 0).tap()
-        app.buttons["photoDetailMore"].tap()
-        XCTAssertTrue(app.buttons["分享"].waitForExistence(timeout: 5))
-        app.buttons["分享"].tap()
+        XCTAssertTrue(app.buttons["sharePhoto"].waitForExistence(timeout: 5))
+        app.buttons["sharePhoto"].tap()
         // Fetching the original can involve an iCloud download, so allow time.
         // On iOS 26 the "ActivityListView" identifier sits on an Other element and
         // the collection view is "activityCollectionView" (the share sheet runs

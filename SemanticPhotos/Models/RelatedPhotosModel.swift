@@ -69,12 +69,23 @@ final class RelatedPhotosModel {
     }
 }
 
-enum PhotoDetailSwipe {
-    enum Action { case explore, dismiss }
+/// Only a deliberate pull past the bottom arms loading; retracting cancels it.
+struct RelatedPhotoPull {
+    static let threshold: CGFloat = 72
+    private(set) var isArmed = false
 
-    static func action(distance: CGFloat, velocity: CGFloat) -> Action? {
-        if distance < -100 || (distance < -30 && velocity < -850) { return .explore }
-        if distance > 100 || (distance > 30 && velocity > 850) { return .dismiss }
-        return nil
+    // ScrollGeometry's viewport already excludes safe-area insets; offset is normalized to the top.
+    static func overscroll(offset: CGFloat, contentHeight: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        offset - max(0, contentHeight - viewportHeight)
+    }
+
+    mutating func update(distance: CGFloat, isDragging: Bool, hasMore: Bool) {
+        isArmed = isDragging && hasMore && distance >= Self.threshold
+    }
+
+    mutating func finish(cancelled: Bool) -> Bool {
+        let load = isArmed && !cancelled
+        isArmed = false
+        return load
     }
 }

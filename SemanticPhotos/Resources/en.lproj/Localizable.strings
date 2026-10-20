@@ -219,6 +219,7 @@
 "模型文件不完整或版本不兼容，请重试下载。" = "The model is incomplete or incompatible. Try downloading it again.";
 "模型未就绪" = "Model Not Ready";
 "模型资源暂时不可用，请稍后重试。" = "Model resources are temporarily unavailable. Please try again later.";
+"模型下载暂时没有进展，请检查网络后重试。" = "The model download has stopped making progress. Check your connection and try again.";
 "模型返回了空向量" = "The model returned an empty embedding";
 "正在下载模型 · %@" = "Downloading model · %@";
 "正在从 iCloud 下载 · %lld%%" = "Downloading from iCloud · %lld%%";
@@ -361,7 +362,7 @@
 "雪山" = "Snowy mountains";
 "需要下载 %lld / 共 %lld 张" = "Downloads needed: %lld / Total: %lld";
 "需要重试" = "Needs Retry";
-"首次使用会自动从 Apple 下载搜索模型，约 388 MB。建议连接 Wi-Fi；使用蜂窝网络可能产生流量费用。" = "On first use, the search model (about 388 MB) downloads automatically from Apple. Wi-Fi is recommended. Cellular data charges may apply.";
+"首次使用会自动下载约 388 MB 的搜索模型；Apple 下载不可用时会使用备用服务器。建议连接 Wi-Fi；使用蜂窝网络可能产生流量费用。" = "On first use, the search model (about 388 MB) downloads automatically. If the Apple download is unavailable, a backup server is used. Wi-Fi is recommended. Cellular data charges may apply.";
 "首次使用需联网下载模型，照片不会上传。地点名称来自内置离线城市库。iCloud 照片由系统按需下载；默认不会主动下载索引图，需要时由你选择。" = "An internet connection is needed for the initial model download. Photos are never uploaded. Place names come from an offline city database. iOS downloads iCloud photos as needed; downloading photos for indexing requires your choice.";
 "首次整理可能发热，之后通常只更新新增或编辑的照片。" = "Initial indexing may warm your phone. Later passes usually process only new or edited photos.";
 "首次整理可能需要一些时间，手机可能发热。已有进度会保留，之后通常只更新新增或编辑的照片。" = "Initial indexing may take a while and warm your phone. Progress is saved. Later passes usually process only new or edited photos.";
@@ -393,3 +394,8 @@
 "松手加载更多" = "Release to load more";
 "没有更多相关照片了" = "No more related photos";
 "加载更多相似照片" = "Load more similar matches";
+
+"返回照片" = "Back to Photo";
+
+"这张照片将从系统照片图库删除，而不只是从当前列表移除。" = "This photo will be deleted from your system photo library, not just removed from this list.";
+"显示或隐藏控制栏" = "Show or Hide Controls";

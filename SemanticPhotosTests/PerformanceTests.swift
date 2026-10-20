@@ -354,6 +354,137 @@ final class PerformanceTests: XCTestCase {
     }
 
     @MainActor
+    func testGridPinchKeepsCollectionLayoutFrozen() {
+        final class Pinch: UIPinchGestureRecognizer {
+            var phase = UIGestureRecognizer.State.began
+            var point = CGPoint(x: 195, y: 422)
+            override var state: UIGestureRecognizer.State {
+                get { phase }
+                set { phase = newValue }
+            }
+            override func location(in view: UIView?) -> CGPoint { point }
+        }
+        let coordinator = GridCoordinator(model: AppModel.shared, initialColumns: 4)
+        let view = coordinator.collectionView
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        coordinator.update(GridState(ids: (0..<1000).map { "zoom-fixture-\($0)" }, scores: [:],
+                                     textMatches: [], originals: [], processing: [], failed: [],
+                                     isSearch: false, lowRelevanceStart: 41, selection: nil, dates: [:]))
+        view.layoutIfNeeded()
+        let pinch = Pinch()
+        let action = NSSelectorFromString("pinched:")
+        coordinator.perform(action, with: pinch)
+        let frame = coordinator.layout.frame(at: 10)
+        var samples: [Double] = []
+        for scale in [1.2, 1.5, 1.1, 0.9, 0.7, 0.5, 0.8, 1.0] {
+            pinch.phase = .changed
+            pinch.scale = scale
+            samples.append(timed { coordinator.perform(action, with: pinch) })
+            XCTAssertEqual(coordinator.layout.columns, 4, "手势期间不能重新排布主网格")
+            XCTAssertEqual(coordinator.layout.frame(at: 10), frame)
+            let overlay = view.subviews.first { $0.accessibilityIdentifier == "gridZoomTransition" }
+            for case let canvas as GridZoomCanvas in overlay?.subviews ?? [] where canvas.alpha > 0 && !canvas.isBackdrop {
+                XCTAssertEqual(canvas.convert(canvas.focus, to: overlay).x, 195, accuracy: 0.1,
+                               "手指水平不动时，跨列数不能左右移动焦点")
+            }
+        }
+        report("grid_pinch_density_boundary", samples)
+        for x in [60.0, 300.0, 195.0] {
+            pinch.point.x = x
+            pinch.scale = 0.7
+            coordinator.perform(action, with: pinch)
+            let overlay = view.subviews.first { $0.accessibilityIdentifier == "gridZoomTransition" }
+            for case let canvas as GridZoomCanvas in overlay?.subviews ?? [] where canvas.alpha > 0 {
+                if canvas.isBackdrop {
+                    XCTAssertLessThanOrEqual(canvas.frame.minX, 0)
+                    XCTAssertGreaterThanOrEqual(canvas.frame.maxX, view.bounds.width)
+                } else {
+                    XCTAssertEqual(canvas.convert(canvas.focus, to: overlay).x, x, accuracy: 0.1,
+                                   "焦点只跟随手指平移，不随列数重新居中")
+                }
+            }
+        }
+        // Repeated frames inside the same interval must not rebuild canvases or load cells.
+        pinch.scale = 1.1
+        coordinator.perform(action, with: pinch)
+        let overlay = view.subviews.first { $0.accessibilityIdentifier == "gridZoomTransition" }
+        let count = overlay?.subviews.count
+        let steady = (0..<60).map { step in
+            pinch.scale = 1.1 + CGFloat(step) / 1000
+            return timed { coordinator.perform(action, with: pinch) }
+        }
+        XCTAssertEqual(overlay?.subviews.count, count)
+        report("grid_pinch_steady_frame", steady)
+        let held = overlay?.subviews.map(\.transform)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(overlay?.subviews.map(\.transform), held, "手指停下时过渡不能自行继续")
+        pinch.phase = .ended
+        coordinator.perform(action, with: pinch)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.04))
+        let transforms = overlay?.subviews.map(\.transform)
+        let opacities = overlay?.subviews.map(\.alpha)
+        pinch.phase = .began
+        coordinator.perform(action, with: pinch)
+        XCTAssertEqual(overlay?.subviews.map(\.transform), transforms, "接管归位动画时不能跳变")
+        XCTAssertEqual(overlay?.subviews.map(\.alpha), opacities)
+        pinch.phase = .cancelled
+        coordinator.perform(action, with: pinch)
+        coordinator.scroll(to: nil, request: 1)
+        XCTAssertTrue(view.isScrollEnabled)
+        XCTAssertFalse(view.subviews.contains { $0.accessibilityIdentifier == "gridZoomTransition" })
+    }
+
+    func testGridZoomSpringPreservesReleaseVelocity() {
+        for velocity: CGFloat in [-8, 0, 8] {
+            let initial = GridZoomSpring.value(from: 4.4, to: 4, velocity: velocity, time: 0)
+            XCTAssertEqual(initial.position, 4.4, accuracy: 0.0001)
+            XCTAssertEqual(initial.velocity, velocity, accuracy: 0.0001)
+            let end = GridZoomSpring.value(from: 4.4, to: 4, velocity: velocity, time: 0.6)
+            XCTAssertEqual(end.position, 4, accuracy: 0.0001)
+            XCTAssertEqual(end.velocity, 0, accuracy: 0.001)
+        }
+    }
+
+    @MainActor
+    func testGridZoomKeepsTilesSeparated() {
+        final class Source: NSObject, UICollectionViewDataSource {
+            func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { 30 }
+            func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+                collectionView.dequeueReusableCell(withReuseIdentifier: "cell", for: indexPath)
+            }
+        }
+        let source = Source()
+        let layout = ZoomGridLayout()
+        let view = UICollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), collectionViewLayout: layout)
+        view.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "cell")
+        view.dataSource = source
+        view.reloadData()
+        for columns in [2, 3, 5, 10] {
+            for padding in [0, columns - 1] {
+                for divider in [nil, 7] as [Int?] {
+                    layout.columns = CGFloat(columns)
+                    layout.leadingSlots = padding
+                    layout.breakIndex = divider
+                    layout.prepare()
+                    let overlap = (0..<30).first { first in
+                        ((first + 1)..<30).contains { second in
+                            let intersection = layout.frame(at: first).intersection(layout.frame(at: second))
+                            return !intersection.isNull && intersection.width > 1 && intersection.height > 1
+                        }
+                    }
+                    XCTAssertNil(overlap, "换列与焦点对齐不能让照片交叠")
+                    let frame = layout.frame(at: 4)
+                    XCTAssertEqual(layout.index(at: CGPoint(x: frame.midX, y: frame.midY)), 4)
+                    let rect = CGRect(x: 0, y: 200, width: 390, height: 500)
+                    let visible = (0..<30).filter { layout.frame(at: $0).maxY > rect.minY && layout.frame(at: $0).minY < rect.maxY }
+                    XCTAssertEqual(Array(layout.indices(in: rect, columns: columns)), visible)
+                    XCTAssertEqual(layout.contentHeight(columns: columns), layout.collectionViewContentSize.height)
+                }
+            }
+        }
+    }
+
+    @MainActor
     func testGridLayoutScaling() {
         final class Source: NSObject, UICollectionViewDataSource {
             var count = 0
@@ -370,7 +501,7 @@ final class PerformanceTests: XCTestCase {
         for count in [10_000, 100_000] {
             source.count = count
             view.reloadData()
-            for columns in [4.0, 4.5] {
+            for columns in [4.0, 5.0] {
                 layout.columns = columns
                 layout.prepare()
                 var samples: [Double] = []

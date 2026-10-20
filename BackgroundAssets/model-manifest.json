@@ -1,7 +1,7 @@
 {
   "assetPackID": "SemanticPhotosModel",
   "downloadPolicy": {
-    "prefetch": {
+    "essential": {
       "installationEventTypes": ["firstInstallation", "subsequentUpdate"]
     }
   },

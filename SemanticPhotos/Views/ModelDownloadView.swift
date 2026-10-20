@@ -12,7 +12,7 @@ struct ModelDownloadView: View {
                     .frame(height: 150)
                 Text(String(localized: "正在准备\(AppInfo.displayName)"))
                     .font(.title2.bold())
-                Text(String(localized: "首次使用会自动从 Apple 下载搜索模型，约 388 MB。建议连接 Wi-Fi；使用蜂窝网络可能产生流量费用。"))
+                Text(String(localized: "首次使用会自动下载约 388 MB 的搜索模型；Apple 下载不可用时会使用备用服务器。建议连接 Wi-Fi；使用蜂窝网络可能产生流量费用。"))
                     .foregroundStyle(.secondary)
                 status
                 Text(String(localized: "模型准备好后，再授权相册并建立索引。照片始终在本机处理，不会上传；下载完成后可以离线搜索。"))
@@ -26,6 +26,16 @@ struct ModelDownloadView: View {
         }
         .contentMargins(.top, 24)
         .accessibilityIdentifier("modelDownloadScreen")
+        .safeAreaInset(edge: .bottom) {
+            if case .failed = model.modelProvisioner.state {
+                Button(String(localized: "重试下载"), action: model.prepareModel)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("retryModelDownload")
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.bar)
+            }
+        }
     }
 
     private var isWorking: Bool {
@@ -70,9 +80,6 @@ struct ModelDownloadView: View {
             Text(String(localized: "请检查网络连接和可用储存空间后重试。"))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Button(String(localized: "重试下载"), action: model.prepareModel)
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("retryModelDownload")
         }
     }
 }

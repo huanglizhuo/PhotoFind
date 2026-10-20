@@ -1,153 +1,94 @@
 import SwiftUI
 
+/// Inline continuation of the photo detail's single scroll view.
 struct RelatedPhotosView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.dynamicTypeSize) private var typeSize
-    let seedID: String
-    @State private var path: [Route] = []
-    @State private var detent = PresentationDetent.medium
-
-    private enum Route: Hashable {
-        case photo(String, [String])
-        case related(String)
-    }
-
-    var body: some View {
-        NavigationStack(path: $path) {
-            results(seedID)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { dismiss() } label: {
-                            Label(String(localized: "收起探索"), systemImage: "chevron.down")
-                        }
-                        .accessibilityIdentifier("closePhotoExploration")
-                    }
-                    if !typeSize.isAccessibilitySize {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                detent = detent == .large ? .medium : .large
-                            } label: {
-                                Label(String(localized: "展开或收起面板"), systemImage: "arrow.up.left.and.arrow.down.right")
-                            }
-                            .accessibilityIdentifier("expandPhotoExploration")
-                        }
-                    }
-                }
-                .navigationDestination(for: Route.self) { route in
-                    switch route {
-                    case let .photo(id, ids):
-                        PhotoDetailPage(startID: id, photoIDs: ids, isExploring: true) { seed in
-                            path.append(.related(seed))
-                        }
-                    case let .related(id):
-                        results(id)
-                    }
-                }
-        }
-        .presentationDetents(path.isEmpty && !typeSize.isAccessibilitySize ? [.medium, .large] : [.large], selection: $detent)
-        .presentationDragIndicator(.visible)
-        .presentationContentInteraction(.resizes)
-        .onChange(of: typeSize, initial: true) { _, size in
-            if size.isAccessibilitySize { detent = .large }
-        }
-        .interactiveDismissDisabled(!path.isEmpty)
-        .preferredColorScheme(.dark)
-    }
-
-    private func results(_ id: String) -> some View {
-        RelatedPhotoResults(seedID: id) { photo, ids in
-            detent = .large
-            path.append(.photo(photo, ids))
-        }
-        .id(id)
-    }
-}
-
-private struct RelatedPhotoResults: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     let seedID: String
+    let exploration: RelatedPhotosModel
+    let minimumHeight: CGFloat
+    let isLoadMoreArmed: Bool
+    let onRetry: () -> Void
     let onOpen: (String, [String]) -> Void
-    @State private var exploration = RelatedPhotosModel()
-    @State private var position = PhotoGridPosition()
-    @State private var thumbnail: UIImage?
-    @State private var retry = 0
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 20) {
             HStack(spacing: 12) {
-                Group {
-                    if let thumbnail { Image(uiImage: thumbnail).resizable().scaledToFill() }
-                    else { Image(systemName: "photo").foregroundStyle(.secondary) }
-                }
-                .frame(width: 52, height: 52).clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .accessibilityLabel(String(localized: "参照照片"))
-                .accessibilityIdentifier("explorationSeed-\(seedID)")
+                RelatedPhotoThumbnail(id: seedID)
+                    .id(seedID)
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityLabel(String(localized: "参照照片"))
+                    .accessibilityIdentifier("explorationSeed-\(seedID)")
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "与这张照片相似"))
                         .font(.headline)
-                        .fixedSize(horizontal: false, vertical: true)
                     Text(model.unindexedCount > 0
                          ? String(localized: "正在已分析的照片中查找")
                          : String(localized: "全部已分析且可访问的照片"))
                         .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal)
 
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        }
-        .padding(.bottom, 8)
-        .navigationTitle(String(localized: "探索相关照片"))
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: retry) {
-            if exploration.state != .ready {
-                await exploration.load { try await model.relatedPhotos(to: seedID) }
+            if exploration.state == .ready {
+                ZStack {
+                    // Reserve both prompts so crossing the threshold never moves the bottom edge.
+                    Text(String(localized: "上拉加载更多相似照片")).hidden()
+                    Text(String(localized: "松手加载更多")).hidden()
+                    Text(String(localized: "没有更多相关照片了")).hidden()
+                    Text(!exploration.hasMore ? String(localized: "没有更多相关照片了")
+                         : isLoadMoreArmed ? String(localized: "松手加载更多")
+                         : String(localized: "上拉加载更多相似照片"))
+                        .accessibilityIdentifier("relatedPhotosLoadMore")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .padding(.horizontal)
+                .accessibilityActions {
+                    if exploration.hasMore {
+                        Button(String(localized: "加载更多相似照片")) { exploration.showMore() }
+                    }
+                }
             }
-            if exploration.state == .unavailable { dismiss() }
         }
-        .task(id: seedID) { thumbnail = await model.photoService.localThumbnail(for: seedID) }
-        .onChange(of: model.library.ids) { _, ids in
-            guard ids.contains(seedID) else { dismiss(); return }
-            exploration.retain(Set(ids))
-            if exploration.state == .notIndexed { retry += 1 }
-        }
-        .onChange(of: model.libraryRevision) { _, _ in
-            if model.photoService.asset(for: seedID)?.isHidden != false { dismiss() }
-            let assets = model.photoService.assetsMap(for: exploration.hits.map(\.id))
-            exploration.retain(Set(assets.values.filter { !$0.isHidden }.map(\.localIdentifier)))
-        }
+        .padding(.vertical, 16)
+        .frame(minHeight: minimumHeight)
     }
 
     @ViewBuilder private var content: some View {
         switch exploration.state {
         case .loading:
             ProgressView(String(localized: "正在查找相关照片…"))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("relatedPhotosLoading")
         case .ready:
-            PhotoCollection(model: model,
-                state: GridState(ids: exploration.visibleIDs, scores: [:], textMatches: [], originals: [],
-                                 processing: [], failed: [], isSearch: false, lowRelevanceStart: nil,
-                                 selection: nil, dates: [:]),
-                onSelect: { onOpen($0, exploration.visibleIDs) },
-                onMonth: { _ in }, onScrolling: { _ in },
-                accessibilityID: "relatedPhotoGrid", initialColumns: 3, position: position,
-                hasMore: exploration.hasMore, onLoadMore: { exploration.showMore() })
-                .overlay {
-                    if exploration.visibleIDs.isEmpty {
-                        ContentUnavailableView(String(localized: "暂未找到明显相似的照片"),
-                                               systemImage: "photo.on.rectangle.angled")
-                            .padding(.bottom, 80)
-                            .allowsHitTesting(false)
-                            .accessibilityIdentifier("relatedPhotosEmpty")
+            if exploration.visibleIDs.isEmpty {
+                ContentUnavailableView(String(localized: "暂未找到明显相似的照片"),
+                                       systemImage: "photo.on.rectangle.angled")
+                    .accessibilityIdentifier("relatedPhotosEmpty")
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
+                    ForEach(exploration.visibleIDs, id: \.self) { id in
+                        Button { onOpen(id, exploration.visibleIDs) } label: {
+                            Color.clear
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay { RelatedPhotoThumbnail(id: id) }
+                                .clipped()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(model.photo(id)?.meta.takenAt.map {
+                            String(localized: "照片，") + $0.formatted(date: .abbreviated, time: .shortened)
+                        } ?? String(localized: "照片"))
+                        .accessibilityIdentifier("photoCell-\(id)")
                     }
                 }
-
+            }
         case .notIndexed:
             ContentUnavailableView {
                 Label(String(localized: "这张照片需要先分析"), systemImage: "sparkle.magnifyingglass")
@@ -174,7 +115,34 @@ private struct RelatedPhotoResults: View {
     }
 
     private var retryButton: some View {
-        Button(String(localized: "重试")) { retry += 1 }
+        Button(String(localized: "重试"), action: onRetry)
             .accessibilityIdentifier("retryRelatedPhotos")
+    }
+}
+
+struct RelatedPhotoThumbnail: View {
+    @Environment(AppModel.self) private var model
+    let id: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        GeometryReader { geometry in
+            Group {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Rectangle().fill(.quaternary)
+                        .overlay { Image(systemName: "photo").foregroundStyle(.secondary) }
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+        .task(id: id) {
+            let thumbnail = await model.photoService.localThumbnail(for: id)
+            guard !Task.isCancelled else { return }
+            image = thumbnail
+        }
+        .onDisappear { image = nil }
     }
 }

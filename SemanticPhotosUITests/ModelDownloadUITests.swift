@@ -44,6 +44,7 @@ final class ModelDownloadUITests: XCTestCase {
         app.launch()
         let retry = app.buttons["retryModelDownload"]
         XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        XCTAssertTrue(retry.isHittable, "Retry must be visible without scrolling past the error")
         XCTAssertTrue(app.staticTexts["模型准备失败"].exists)
         retry.tap()
         XCTAssertTrue(retry.waitForExistence(timeout: 10))

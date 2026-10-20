@@ -6,7 +6,7 @@ import UIKit
 /// every photo on each scroll step and could only fake the pinch with a
 /// scaleEffect. Here cells are reused, thumbnails stream from
 /// PHCachingImageManager (degraded first, cancelled on reuse), and the pinch
-/// (F3.2) drives a fractional column count anchored on the photo under the fingers.
+/// (F3.2) scales a regular grid around the photo under the fingers.
 struct PhotoGridView: View {
     @Environment(AppModel.self) private var model
     /// Non-nil while multi-selecting (F4.11): taps toggle instead of opening.
@@ -218,12 +218,6 @@ struct GridState {
     var dates: [String: Date]
 }
 
-/// Kept by an exploration page while its collection view is off the navigation stack.
-@MainActor final class PhotoGridPosition {
-    var offset: CGPoint = .zero
-    var columns: CGFloat = 3
-}
-
 struct PhotoCollection: UIViewRepresentable {
     let model: AppModel
     let state: GridState
@@ -236,31 +230,20 @@ struct PhotoCollection: UIViewRepresentable {
     /// An independent grid starts at this density without changing the library's saved zoom.
     var initialColumns: Int? = nil
     var onVisibleIndex: ((Int) -> Void)? = nil
-    var position: PhotoGridPosition? = nil
-    var hasMore = false
-    var onLoadMore: (() -> Void)? = nil
 
-    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model, initialColumns: initialColumns, position: position) }
+    func makeCoordinator() -> GridCoordinator { GridCoordinator(model: model, initialColumns: initialColumns) }
 
     func makeUIView(context: Context) -> UICollectionView { context.coordinator.collectionView }
 
     func updateUIView(_ view: UICollectionView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.onSelect = { [weak coordinator] id in
-            coordinator?.savePosition()
-            onSelect(id)
-        }
+        coordinator.onSelect = onSelect
         coordinator.onMonth = onMonth
         coordinator.onScrolling = onScrolling
         coordinator.onVisibleIndex = onVisibleIndex
-        coordinator.collectionView.configureLoadMore(hasMore: hasMore, action: onLoadMore)
         coordinator.update(state)
         view.accessibilityIdentifier = accessibilityID
         coordinator.scroll(to: scrollToID, request: scrollRequest)
-    }
-
-    static func dismantleUIView(_ view: UICollectionView, coordinator: GridCoordinator) {
-        coordinator.savePosition()
     }
 }
 
@@ -270,15 +253,6 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     var onVisibleIndex: ((Int) -> Void)?
     private var lastVisibleIndex: Int?
     private let savesColumns: Bool
-    private let position: PhotoGridPosition?
-    private var needsPositionRestore: Bool
-
-    func savePosition() {
-        guard !needsPositionRestore else { return }
-        position?.offset = collectionView.contentOffset
-        position?.columns = layout.columns
-    }
-
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
     private var state = GridState(ids: [], scores: [:], textMatches: [], originals: [],
                                   processing: [], failed: [],
@@ -286,12 +260,14 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     private var assets: [String: PHAsset] = [:]
     /// F4.4: where the grid was before a search, restored when it is cleared.
     private var gridOffset: CGPoint?
+    private var gridLeadingSlots = 0
     private var currentMonth: String?
     private var lastScrollRequest = 0
 
     func scroll(to id: String?, request: Int) {
         guard request != lastScrollRequest else { return }
         lastScrollRequest = request
+        finishZoomIfNeeded()
         guard let id, let path = dataSource.indexPath(for: id) else { return }
         collectionView.layoutIfNeeded()
         collectionView.scrollToItem(at: path, at: .top, animated: false)
@@ -317,20 +293,27 @@ final class GridCoordinator: ThumbnailGridCoordinator {
 
     // Pinch: the photo under the fingers, the point inside it they touched,
     // and where on screen that point must stay.
-    private var anchor: (index: Int, unitY: CGFloat, viewportY: CGFloat)?
+    private var anchor: (index: Int, unit: CGPoint, viewport: CGPoint)?
     private var snapshotVersion = 0
     private var pinchStartColumns: CGFloat = 0
+    private var zoomDensity: CGFloat = 4
     private var snapLink: CADisplayLink?
     private var snapFrom: CGFloat = 0
     private var snapTo: CGFloat = 0
     private var snapStart: CFTimeInterval = 0
+    private var snapVelocity: CGFloat = 0
+    private var snapFocusFrom: CGFloat = 0
+    private var snapFocusTo: CGFloat = 0
+    private var zoomBackdrop: GridZoomCanvas?
+    private var pinchOrigin = CGPoint.zero
+    private var zoomOrigin = CGPoint.zero
+    private var pinchAnchorOrigin = CGPoint.zero
+    private var zoomOverlay: UIView?
+    private var zoomCanvases: [Int: GridZoomCanvas] = [:]
 
-    init(model: AppModel, initialColumns: Int? = nil, position: PhotoGridPosition? = nil) {
+    init(model: AppModel, initialColumns: Int? = nil) {
         savesColumns = initialColumns == nil
-        self.position = position
-        needsPositionRestore = position != nil
         super.init(model: model, columns: initialColumns ?? model.gridColumns)
-        if let position { layout.columns = position.columns }
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched)))
         let registration = UICollectionView.CellRegistration<PhotoCell, String> { [unowned self] cell, indexPath, id in
@@ -347,8 +330,15 @@ final class GridCoordinator: ThumbnailGridCoordinator {
 
     func update(_ new: GridState) {
         let old = state
+        if new.ids != old.ids || new.lowRelevanceStart != old.lowRelevanceStart
+            || (zoomOverlay != nil && zoomOverlay?.bounds.size != collectionView.bounds.size) {
+            finishZoomIfNeeded()
+        }
         state = new
-        if new.isSearch && !old.isSearch { gridOffset = collectionView.contentOffset }
+        if new.isSearch && !old.isSearch {
+            gridOffset = collectionView.contentOffset
+            gridLeadingSlots = layout.leadingSlots
+        }
         if new.ids != old.ids {
             let retained = Set(new.ids)
             assets = assets.filter { retained.contains($0.key) }
@@ -363,12 +353,6 @@ final class GridCoordinator: ThumbnailGridCoordinator {
             let offset = visible.map { collectionView.contentOffset.y - layout.frame(at: $0.item).minY } ?? 0
             dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
                 guard let self, self.snapshotVersion == version else { return }
-                if self.needsPositionRestore, let position = self.position {
-                    self.collectionView.layoutIfNeeded()
-                    self.collectionView.setContentOffset(position.offset, animated: false)
-                    self.needsPositionRestore = false
-                    return
-                }
                 guard let anchorID,
                       let path = self.dataSource.indexPath(for: anchorID) else { return }
                 self.collectionView.layoutIfNeeded()
@@ -379,6 +363,7 @@ final class GridCoordinator: ThumbnailGridCoordinator {
         let breakIndex = new.lowRelevanceStart.flatMap { $0 < new.ids.count ? $0 : nil }
         if layout.breakIndex != breakIndex { layout.breakIndex = breakIndex }
         if new.isSearch != old.isSearch {
+            layout.leadingSlots = new.isSearch ? 0 : gridLeadingSlots
             let insets = collectionView.adjustedContentInset
             let top = CGPoint(x: -insets.left, y: -insets.top)
             collectionView.contentOffset = new.isSearch ? top : gridOffset ?? top
@@ -444,7 +429,6 @@ final class GridCoordinator: ThumbnailGridCoordinator {
 
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
         super.scrollViewDidScroll(scrollView)
-        collectionView.updatePull(isDragging: scrollView.isDragging)
         guard !state.isSearch, !state.ids.isEmpty, scrollView.isTracking || scrollView.isDecelerating else { return }
         let top = CGPoint(x: 1, y: scrollView.contentOffset.y + scrollView.adjustedContentInset.top + 1)
         let index = layout.index(at: top)
@@ -470,7 +454,6 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     }
 
     override func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        collectionView.finishPull(cancelled: scrollView.panGestureRecognizer.state == .cancelled)
         if !decelerate { onScrolling(false) }
     }
 
@@ -481,73 +464,256 @@ final class GridCoordinator: ThumbnailGridCoordinator {
     // MARK: - Pinch (F3.2)
 
     @objc private func pinched(_ pinch: UIPinchGestureRecognizer) {
+        let point = pinch.location(in: collectionView)
+        let viewport = CGPoint(x: point.x, y: point.y - collectionView.contentOffset.y)
         switch pinch.state {
         case .began:
-            if snapLink != nil { endSnap() }
             guard !state.ids.isEmpty else { return }
-            onScrolling(true)
-            let point = pinch.location(in: collectionView)
-            let index = layout.index(at: point)
-            let frame = layout.frame(at: index)
-            anchor = (index, (point.y - frame.minY) / frame.height, point.y - collectionView.contentOffset.y)
-            pinchStartColumns = layout.columns
+            snapLink?.invalidate()
+            snapLink = nil
+            if anchor == nil {
+                zoomDensity = layout.columns
+                zoomOrigin = viewport
+                let index = layout.index(at: point)
+                let frame = layout.frame(at: index)
+                anchor = (index,
+                          CGPoint(x: min(1, max(0, (point.x - frame.minX) / frame.width)),
+                                  y: min(1, max(0, (point.y - frame.minY) / frame.height))), viewport)
+                let overlay = UIView(frame: collectionView.bounds)
+                overlay.backgroundColor = .systemBackground
+                overlay.clipsToBounds = true
+                overlay.isUserInteractionEnabled = false
+                overlay.accessibilityElementsHidden = true
+                overlay.accessibilityIdentifier = "gridZoomTransition"
+                collectionView.addSubview(overlay)
+                zoomOverlay = overlay
+            }
+            // Keep the displayed blend when another pinch interrupts the settling spring.
+            pinchOrigin = viewport
+            pinchAnchorOrigin = anchor!.viewport
+            pinchStartColumns = zoomDensity
             pinch.scale = 1
-            // Stop any deceleration and keep the pan from fighting over contentOffset.
+            onScrolling(true)
             collectionView.setContentOffset(collectionView.contentOffset, animated: false)
             collectionView.isScrollEnabled = false
+            renderZoom()
         case .changed:
             guard anchor != nil else { return }
-            anchor?.viewportY = pinch.location(in: collectionView).y - collectionView.contentOffset.y
-            setColumns(min(10, max(2, pinchStartColumns / pinch.scale)))
-        default:
-            collectionView.isScrollEnabled = true
+            anchor?.viewport = CGPoint(x: pinchAnchorOrigin.x + viewport.x - pinchOrigin.x,
+                                       y: pinchAnchorOrigin.y + viewport.y - pinchOrigin.y)
+            zoomDensity = min(10, max(2, pinchStartColumns / pinch.scale))
+            renderZoom()
+        case .ended:
             guard anchor != nil else { return }
-            snap(to: layout.columns.rounded())
+            let velocity = min(8, max(-8, -zoomDensity * pinch.velocity / pinch.scale))
+            snap(to: min(10, max(2, (zoomDensity + velocity * 0.06).rounded())), velocity: velocity)
+        case .cancelled, .failed:
+            guard anchor != nil else { return }
+            snap(to: pinchStartColumns.rounded(), velocity: 0)
+        default:
+            break
         }
     }
 
-    /// Applies a (fractional) column count and scrolls so the anchor point
-    /// stays under the fingers, clamped to the content.
-    private func setColumns(_ columns: CGFloat) {
-        guard let anchor else { return }
-        model.pipeline.noteInteraction()  // the offset may be clamped, so no scroll callback
-        layout.columns = columns
-        let frame = layout.frame(at: anchor.index)
+    /// Prepare only nearby rows once per density; the gesture itself changes layer transforms and opacity.
+    private func zoomCanvas(columns: Int, isBackdrop: Bool = false) -> GridZoomCanvas {
+        if isBackdrop, let canvas = zoomBackdrop, canvas.columns == columns { return canvas }
+        if !isBackdrop, let canvas = zoomCanvases[columns] { return canvas }
+        let anchor = anchor!
+        let bounds = collectionView.bounds
         let insets = collectionView.adjustedContentInset
-        let maxY = layout.collectionViewContentSize.height + insets.bottom - collectionView.bounds.height
-        let y = frame.minY + anchor.unitY * frame.height - anchor.viewportY
-        collectionView.contentOffset.y = max(-insets.top, min(y, maxY))
+        let localIndex = layout.breakIndex.map { anchor.index >= $0 ? anchor.index - $0 : anchor.index } ?? anchor.index
+        let visibleColumns = isBackdrop ? columns - 2 : columns
+        let targetColumn = min(visibleColumns - 1, max(0, Int((zoomOrigin.x / bounds.width * CGFloat(visibleColumns) - anchor.unit.x).rounded()))) + (isBackdrop ? 1 : 0)
+        let padding = !isBackdrop && CGFloat(columns) == layout.columns ? layout.leadingSlots
+            : (targetColumn - localIndex % columns + columns) % columns
+        let frame = layout.frame(at: anchor.index, columns: columns, leadingSlots: padding)
+        let focus = CGPoint(x: frame.minX + frame.width * anchor.unit.x,
+                            y: frame.minY + frame.height * anchor.unit.y)
+        let height = layout.contentHeight(columns: columns, leadingSlots: padding)
+        let offset = max(-insets.top, min(focus.y - anchor.viewport.y, height + insets.bottom - bounds.height))
+        let canvas = GridZoomCanvas(frame: CGRect(origin: .zero, size: bounds.size))
+        canvas.layer.anchorPoint = .zero
+        canvas.layer.position = .zero
+        canvas.isUserInteractionEnabled = false
+        let side = layout.itemSide(columns: CGFloat(columns))
+        let minScale = layout.itemSide(columns: CGFloat(min(10, columns + 1))) / side
+        let margin = bounds.height * 0.25
+        let rect = CGRect(x: 0, y: offset + anchor.viewport.y * (1 - 1 / minScale) - margin,
+                          width: bounds.width, height: bounds.height / minScale + margin * 2)
+        var thumbnails: [String: UIImage] = [:]
+        for case let cell as PhotoCell in collectionView.visibleCells {
+            if let id = cell.representedID, let image = cell.thumbnail { thumbnails[id] = image }
+        }
+        for prepared in Array(zoomCanvases.values) + [zoomBackdrop].compactMap({ $0 }) {
+            for (id, imageView) in prepared.images { if let image = imageView.image { thumbnails[id] = image } }
+        }
+        let indices = layout.indices(in: rect, columns: columns, leadingSlots: padding)
+        let assets = model.photoService.assetsMap(for: indices.map { state.ids[$0] }.filter { thumbnails[$0] == nil })
+        for index in indices {
+            let id = state.ids[index]
+            let imageView = UIImageView(frame: layout.frame(at: index, columns: columns, leadingSlots: padding).offsetBy(dx: 0, dy: -offset))
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.backgroundColor = .secondarySystemFill
+            imageView.image = thumbnails[id]
+            canvas.addSubview(imageView)
+            canvas.images[id] = imageView
+            if imageView.image == nil, let asset = assets[id] {
+                let pixels = max(side, layout.itemSide(columns: zoomDensity)) * collectionView.traitCollection.displayScale
+                let request = model.photoService.cachingManager.requestImage(for: asset, targetSize: CGSize(width: pixels, height: pixels),
+                    contentMode: .aspectFill, options: thumbnailOptions) { [weak imageView] image, _ in
+                        if let image { imageView?.image = image }
+                    }
+                canvas.requests.append(request)
+            }
+        }
+        if let frame = layout.dividerFrame(columns: columns, leadingSlots: padding), frame.intersects(rect) {
+            canvas.addSubview(DividerView(frame: frame.offsetBy(dx: 0, dy: -offset)))
+        }
+        canvas.layoutIfNeeded()
+        zoomOverlay?.addSubview(canvas)
+        canvas.columns = columns
+        canvas.isBackdrop = isBackdrop
+        canvas.leadingSlots = padding
+        canvas.offset = offset
+        canvas.focus = CGPoint(x: focus.x, y: focus.y - offset)
+        canvas.contentHeight = height
+        if isBackdrop {
+            zoomBackdrop?.cancelRequests(using: model.photoService.cachingManager)
+            zoomBackdrop?.removeFromSuperview()
+            zoomBackdrop = canvas
+        } else {
+            zoomCanvases[columns] = canvas
+        }
+        return canvas
     }
 
-    /// Release: ease to the nearest whole column count within 200ms.
-    private func snap(to target: CGFloat) {
-        snapFrom = layout.columns
+    private func renderZoom() {
+        guard let anchor, let overlay = zoomOverlay else { return }
+        model.pipeline.noteInteraction()
+        let lower = Int(zoomDensity.rounded(.down)), upper = Int(zoomDensity.rounded(.up))
+        let progress = zoomDensity - CGFloat(lower)
+        let lowerCanvas = zoomCanvas(columns: lower), upperCanvas = zoomCanvas(columns: upper)
+        // Extra edge columns cover the viewport without pulling the touched photo sideways.
+        let backdrop = zoomCanvas(columns: upper + 2, isBackdrop: true)
+        let canvases = lower == upper ? [lowerCanvas, backdrop] : [lowerCanvas, upperCanvas, backdrop]
+        for canvas in canvases {
+            let scale = layout.itemSide(columns: zoomDensity) / layout.itemSide(columns: CGFloat(canvas.columns))
+            let insets = collectionView.adjustedContentInset
+            var x = anchor.viewport.x - canvas.focus.x * scale
+            if canvas.isBackdrop { x = min(0, max(overlay.bounds.width * (1 - scale), x)) }
+            let minY = overlay.bounds.height - insets.bottom - (canvas.contentHeight - canvas.offset) * scale
+            let maxY = insets.top + canvas.offset * scale
+            let y = min(maxY, max(minY, anchor.viewport.y - canvas.focus.y * scale))
+            canvas.transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: x, ty: y)
+            canvas.alpha = !canvas.isBackdrop && canvas.columns == lower ? 1 - progress : 1
+        }
+        overlay.sendSubviewToBack(backdrop)
+        if let front = zoomCanvases[lower] { overlay.bringSubviewToFront(front) }
+        // Retain the neighbours for immediate reversal, but never a canvas for the whole library.
+        for (columns, canvas) in zoomCanvases where columns < lower - 1 || columns > upper + 1 {
+            canvas.cancelRequests(using: model.photoService.cachingManager)
+            canvas.removeFromSuperview()
+            zoomCanvases.removeValue(forKey: columns)
+        }
+        for (columns, canvas) in zoomCanvases where columns != lower && columns != upper { canvas.alpha = 0 }
+    }
+
+    private func snap(to target: CGFloat, velocity: CGFloat) {
+        snapLink?.invalidate()
+        snapFrom = zoomDensity
         snapTo = target
+        snapVelocity = velocity
+        snapFocusFrom = anchor!.viewport.x
+        snapFocusTo = zoomCanvas(columns: Int(target)).focus.x
+        if UIAccessibility.isReduceMotionEnabled {
+            endSnap()
+            return
+        }
         snapStart = CACurrentMediaTime()
         let link = CADisplayLink(target: self, selector: #selector(snapStep))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
         snapLink = link
     }
 
     @objc private func snapStep() {
-        let t = min(1, (CACurrentMediaTime() - snapStart) / 0.2)
-        setColumns(snapFrom + (snapTo - snapFrom) * (1 - pow(1 - t, 3)))
-        if t >= 1 { endSnap() }
+        let t = CACurrentMediaTime() - snapStart
+        let spring = GridZoomSpring.value(from: snapFrom, to: snapTo, velocity: snapVelocity, time: t)
+        zoomDensity = min(10, max(2, spring.position))
+        anchor?.viewport.x = GridZoomSpring.value(from: snapFocusFrom, to: snapFocusTo, velocity: 0, time: t).position
+        renderZoom()
+        if t > 0.6 || (abs(zoomDensity - snapTo) < 0.002 && abs(spring.velocity) < 0.04
+                      && abs((anchor?.viewport.x ?? snapFocusTo) - snapFocusTo) < 0.1) { endSnap() }
+    }
+
+    private func finishZoomIfNeeded() {
+        guard anchor != nil else { return }
+        snapTo = zoomDensity.rounded()
+        endSnap()
     }
 
     private func endSnap() {
         snapLink?.invalidate()
         snapLink = nil
-        setColumns(snapTo)
+        zoomDensity = snapTo
+        let target = zoomCanvas(columns: Int(snapTo))
+        anchor?.viewport.x = target.focus.x
+        renderZoom()
+        UIView.performWithoutAnimation {
+            layout.columns = snapTo
+            layout.leadingSlots = target.leadingSlots
+            collectionView.contentOffset.y = target.offset - target.transform.ty
+            collectionView.layoutIfNeeded()
+            for case let cell as PhotoCell in collectionView.visibleCells {
+                if let id = cell.representedID {
+                    cell.seedThumbnail(target.images[id]?.image)
+                    configure(cell, id: id)
+                }
+            }
+            zoomOverlay?.removeFromSuperview()
+        }
+        for canvas in zoomCanvases.values {
+            canvas.cancelRequests(using: model.photoService.cachingManager)
+        }
+        zoomCanvases.removeAll()
+        zoomBackdrop?.cancelRequests(using: model.photoService.cachingManager)
+        zoomBackdrop = nil
+        zoomOverlay = nil
         anchor = nil
+        collectionView.isScrollEnabled = true
         onScrolling(false)
         if savesColumns { model.gridColumns = Int(snapTo) }
-        // Cached and requested sizes belong to the old zoom: drop the cache and
-        // re-request cells that grew (they keep showing their image meanwhile).
-        model.photoService.cachingManager.stopCachingImagesForAllAssets()
-        for case let cell as PhotoCell in collectionView.visibleCells {
-            if let id = cell.representedID { configure(cell, id: id) }
-        }
+    }
+
+}
+
+/// Lightweight photo-only layers avoid rebuilding cell chrome and accessibility during a pinch.
+final class GridZoomCanvas: UIView {
+    var columns = 0
+    var isBackdrop = false
+    var leadingSlots = 0
+    var offset: CGFloat = 0
+    var focus = CGPoint.zero
+    var contentHeight: CGFloat = 0
+    var images: [String: UIImageView] = [:]
+    var requests: [PHImageRequestID] = []
+
+    func cancelRequests(using manager: PHImageManager) {
+        requests.forEach(manager.cancelImageRequest)
+        requests.removeAll()
+    }
+}
+
+/// Critically damped settling with the pinch's release velocity, evaluated at display time.
+enum GridZoomSpring {
+    static func value(from: CGFloat, to: CGFloat, velocity: CGFloat, time: TimeInterval) -> (position: CGFloat, velocity: CGFloat) {
+        let t = CGFloat(time), frequency: CGFloat = 24
+        let delta = from - to, coefficient = velocity + frequency * delta
+        let decay = exp(-frequency * t)
+        return (to + (delta + coefficient * t) * decay,
+                (velocity - frequency * coefficient * t) * decay)
     }
 }
 
@@ -572,87 +738,12 @@ private final class DividerView: UICollectionReusableView {
 
 // MARK: - Grid plumbing
 
-/// The footer is opt-in; library and search grids keep their existing scrolling behavior.
-final class PhotoGridCollectionView: UICollectionView {
-    static let loadMoreThreshold: CGFloat = 72
-    private(set) var isLoadMoreArmed = false
-    private var canLoadMore = false
-    private var loadMore: (() -> Void)?
-    private var loadMoreLabel: UILabel?
-    private let pullText = String(localized: "上拉加载更多相似照片")
-    private let releaseText = String(localized: "松手加载更多")
-    private let endText = String(localized: "没有更多相关照片了")
-
-    func configureLoadMore(hasMore: Bool, action: (() -> Void)?) {
-        canLoadMore = hasMore
-        loadMore = action
-        guard action != nil else { return }
-        if loadMoreLabel == nil {
-            let label = UILabel()
-            label.textColor = .secondaryLabel
-            label.textAlignment = .center
-            label.numberOfLines = 0
-            label.adjustsFontForContentSizeCategory = true
-            label.accessibilityIdentifier = "relatedPhotosLoadMore"
-            addSubview(label)
-            loadMoreLabel = label
-        }
-        if !hasMore { isLoadMoreArmed = false }
-        loadMoreLabel?.accessibilityCustomActions = hasMore ? [
-            UIAccessibilityCustomAction(name: String(localized: "加载更多相似照片")) { [weak self] _ in
-                guard let self, self.canLoadMore else { return false }
-                self.loadMore?()
-                return true
-            }
-        ] : nil
-        updateFooterText()
-        setNeedsLayout()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard let label = loadMoreLabel else { return }
-        label.font = .preferredFont(forTextStyle: .footnote)
-        let width = max(1, bounds.width - 32)
-        // Keep the threshold stationary when the release prompt wraps to fewer lines.
-        let height = [pullText, releaseText, endText].map { text in
-            label.text = text
-            return label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        }.max() ?? 0
-        updateFooterText()
-        let footerHeight = max(52, height + 24)
-        if contentInset.bottom != footerHeight { contentInset.bottom = footerHeight }
-        let y = max(contentSize.height, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
-        label.frame = CGRect(x: 16, y: y + 12, width: width, height: height)
-    }
-
-    func updatePull(isDragging: Bool) {
-        guard loadMore != nil else { return }
-        let bottom = max(-adjustedContentInset.top,
-                         contentSize.height - bounds.height + adjustedContentInset.bottom)
-        isLoadMoreArmed = canLoadMore && isDragging && contentOffset.y - bottom >= Self.loadMoreThreshold
-        updateFooterText()
-    }
-
-    func finishPull(cancelled: Bool) {
-        let shouldLoad = isLoadMoreArmed && canLoadMore && !cancelled
-        isLoadMoreArmed = false
-        updateFooterText()
-        if shouldLoad { loadMore?() }
-    }
-
-    private func updateFooterText() {
-        loadMoreLabel?.text = !canLoadMore ? endText : isLoadMoreArmed ? releaseText : pullText
-    }
-}
-
-
 /// Collection-view plumbing for the photo grid: thumbnail requests and
 /// PHCachingImageManager prefetching (F3.3), and holding embedding while the
 /// user scrolls. The coordinator owns the data and maps index paths to assets.
 @MainActor
 class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
-    let collectionView: PhotoGridCollectionView
+    let collectionView: UICollectionView
     let layout = ZoomGridLayout()
     let model: AppModel
     /// Tapped photo's id. Handled here because UIKit never sees optional
@@ -661,7 +752,7 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
 
     /// Shared by requests and caching: PHCachingImageManager only serves a
     /// cached image when size, content mode and options all match.
-    private let options: PHImageRequestOptions = {
+    let thumbnailOptions: PHImageRequestOptions = {
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
@@ -671,7 +762,7 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
     init(model: AppModel, columns: Int) {
         self.model = model
         layout.columns = CGFloat(columns)
-        collectionView = PhotoGridCollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
         super.init()
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
@@ -682,12 +773,12 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
 
     func load(_ cell: PhotoCell, id: String, asset: PHAsset?) {
         cell.load(id: id, asset: asset, manager: model.photoService.cachingManager,
-                  side: thumbnailSide, options: options)
+                  side: thumbnailSide, options: thumbnailOptions)
     }
 
-    /// Pixel side for the current zoom; mid-pinch, the larger of the two cell sizes.
+    /// Pixel side at the displayed scale; cells keep their old image while upgrading.
     private var thumbnailSide: CGFloat {
-        layout.itemSide(columns: layout.columns.rounded(.down)) * collectionView.traitCollection.displayScale
+        layout.itemSide(columns: layout.columns) * collectionView.traitCollection.displayScale
     }
 
     private func cache(_ assets: [PHAsset], start: Bool) {
@@ -695,9 +786,9 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
         let manager = model.photoService.cachingManager
         let size = CGSize(width: thumbnailSide, height: thumbnailSide)
         if start {
-            manager.startCachingImages(for: assets, targetSize: size, contentMode: .aspectFill, options: options)
+            manager.startCachingImages(for: assets, targetSize: size, contentMode: .aspectFill, options: thumbnailOptions)
         } else {
-            manager.stopCachingImages(for: assets, targetSize: size, contentMode: .aspectFill, options: options)
+            manager.stopCachingImages(for: assets, targetSize: size, contentMode: .aspectFill, options: thumbnailOptions)
         }
     }
 
@@ -731,15 +822,17 @@ class ThumbnailGridCoordinator: NSObject, UICollectionViewDelegate, UICollection
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {}
 }
 
-/// Square-cell grid whose column count may be fractional mid-pinch: each frame
-/// is interpolated between the floor and ceil integer grids, so cells glide
-/// into their new slots (like Photos) instead of the whole grid being scaled.
+/// Fixed rows and columns; gesture transitions are composited above this layout.
 /// An optional break starts a new row after a divider (F4.3).
 final class ZoomGridLayout: UICollectionViewLayout {
     static let dividerKind = "lowRelevanceDivider"
 
     var columns: CGFloat = 4 {
         didSet { invalidateLayout() }
+    }
+    /// Preserve the focal photo's column when changing density, without changing photo order.
+    var leadingSlots = 0 {
+        didSet { if leadingSlots != oldValue { invalidateLayout() } }
     }
     /// Items from this index on sit below the divider.
     var breakIndex: Int? {
@@ -793,10 +886,7 @@ final class ZoomGridLayout: UICollectionViewLayout {
     }
 
     func frame(at index: Int) -> CGRect {
-        let low = Int(columns), high = Int(columns.rounded(.up))
-        let a = frame(at: index, columns: low)
-        guard high != low else { return a }
-        return lerp(a, frame(at: index, columns: high), columns - CGFloat(low))
+        frame(at: index, columns: max(1, Int(columns.rounded(.up))))
     }
 
     /// Item under a content-space point: the row first, then the column.
@@ -810,34 +900,41 @@ final class ZoomGridLayout: UICollectionViewLayout {
         return index
     }
 
-    private func frame(at index: Int, columns: Int) -> CGRect {
+    func frame(at index: Int, columns: Int, leadingSlots: Int? = nil) -> CGRect {
         let side = itemSide(columns: CGFloat(columns)), stride = side + spacing
-        var position = index, top: CGFloat = 0
+        let padding = leadingSlots ?? self.leadingSlots
+        var position = index + padding, top: CGFloat = 0
         if let breakIndex, index >= breakIndex {
-            position = index - breakIndex
-            top = rowsTop(before: breakIndex, columns: columns) + dividerHeight
+            position = index - breakIndex + padding
+            top = rowsTop(before: breakIndex, columns: columns, leadingSlots: padding) + dividerHeight
         }
         return CGRect(x: CGFloat(position % columns) * stride, y: top + CGFloat(position / columns) * stride,
                       width: side, height: side)
     }
 
     private func dividerFrame() -> CGRect? {
+        dividerFrame(columns: max(1, Int(columns.rounded(.up))))
+    }
+
+    func dividerFrame(columns: Int, leadingSlots: Int? = nil) -> CGRect? {
         guard let breakIndex else { return nil }
-        let low = Int(columns), high = Int(columns.rounded(.up))
-        let a = CGRect(x: 0, y: rowsTop(before: breakIndex, columns: low), width: width, height: dividerHeight)
-        guard high != low else { return a }
-        let b = CGRect(x: 0, y: rowsTop(before: breakIndex, columns: high), width: width, height: dividerHeight)
-        return lerp(a, b, columns - CGFloat(low))
+        return CGRect(x: 0, y: rowsTop(before: breakIndex, columns: columns, leadingSlots: leadingSlots), width: width, height: dividerHeight)
+    }
+
+    func contentHeight(columns: Int, leadingSlots: Int? = nil) -> CGFloat {
+        max(count > 0 ? frame(at: count - 1, columns: columns, leadingSlots: leadingSlots).maxY : 0,
+            dividerFrame(columns: columns, leadingSlots: leadingSlots)?.maxY ?? 0)
+    }
+
+    func indices(in rect: CGRect, columns: Int, leadingSlots: Int? = nil) -> Range<Int> {
+        let first = partition { frame(at: $0, columns: columns, leadingSlots: leadingSlots).maxY > rect.minY }
+        let end = partition { frame(at: $0, columns: columns, leadingSlots: leadingSlots).minY >= rect.maxY }
+        return first..<end
     }
 
     /// Height taken by the rows holding the first `items` items.
-    private func rowsTop(before items: Int, columns: Int) -> CGFloat {
-        CGFloat((items + columns - 1) / columns) * (itemSide(columns: CGFloat(columns)) + spacing)
-    }
-
-    private func lerp(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
-        CGRect(x: a.minX + (b.minX - a.minX) * t, y: a.minY + (b.minY - a.minY) * t,
-               width: a.width + (b.width - a.width) * t, height: a.height + (b.height - a.height) * t)
+    private func rowsTop(before items: Int, columns: Int, leadingSlots: Int? = nil) -> CGFloat {
+        CGFloat((items + (leadingSlots ?? self.leadingSlots) + columns - 1) / columns) * (itemSide(columns: CGFloat(columns)) + spacing)
     }
 
     private func attributes(at index: Int) -> UICollectionViewLayoutAttributes {
@@ -877,6 +974,12 @@ final class PhotoCell: UICollectionViewCell {
     private(set) var representedID: String?
     private(set) var representedAsset: PHAsset?
     private let imageView = UIImageView()
+    var thumbnail: UIImage? { imageView.image }
+
+    func seedThumbnail(_ image: UIImage?) {
+        if imageView.image == nil { imageView.image = image }
+    }
+
     private let dimView = UIView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let iconView = UIImageView()

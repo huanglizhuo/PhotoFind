@@ -97,55 +97,37 @@ struct RelatedPhotosTests {
         #expect(b.visibleIDs.isEmpty)
     }
 
-    @Test @MainActor func pullUpRequiresReleaseAtThresholdAndCanBeCancelled() {
-        for contentHeight: CGFloat in [0, 120, 1_200] {
-            let grid = PhotoGridCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 600),
-                                               collectionViewLayout: UICollectionViewLayout())
-            var loads = 0
-            grid.contentInsetAdjustmentBehavior = .never
-            grid.contentInset.top = 20
-            grid.configureLoadMore(hasMore: true) { loads += 1 }
-            grid.layoutIfNeeded()
-            grid.contentSize.height = contentHeight
-            let bottom = max(-grid.adjustedContentInset.top,
-                             contentHeight - grid.bounds.height + grid.adjustedContentInset.bottom)
-            func pull(_ distance: CGFloat, dragging: Bool = true) {
-                grid.contentOffset.y = bottom + distance
-                grid.updatePull(isDragging: dragging)
-            }
-            pull(71)
-            #expect(!grid.isLoadMoreArmed)
-            grid.finishPull(cancelled: false)
-            #expect(loads == 0)
-            pull(72)
-            #expect(grid.isLoadMoreArmed)
-            #expect(loads == 0) // Crossing the threshold alone must not load.
-            pull(40)
-            grid.finishPull(cancelled: false)
-            #expect(loads == 0)
-            pull(100)
-            grid.finishPull(cancelled: true)
-            #expect(loads == 0)
-            pull(100, dragging: false)
-            grid.finishPull(cancelled: false)
-            #expect(loads == 0) // Inertial overscroll must not load.
-            pull(72)
-            grid.finishPull(cancelled: false)
-            grid.finishPull(cancelled: false)
-            #expect(loads == 1)
-            grid.configureLoadMore(hasMore: false) { loads += 1 }
-            pull(150)
-            grid.finishPull(cancelled: false)
-            #expect(loads == 1)
+    @Test func inlinePullUsesVisibleViewportForEmptyShortAndLongContent() {
+        for height: CGFloat in [0, 120, 1_386] {
+            let bottom = max(0, height - 693)
+            #expect(RelatedPhotoPull.overscroll(offset: bottom, contentHeight: height, viewportHeight: 693) == 0)
+            #expect(RelatedPhotoPull.overscroll(offset: bottom + 72, contentHeight: height, viewportHeight: 693) == 72)
         }
     }
 
-    @Test func verticalSwipeThresholdsAllowCancellationAndRespectDirection() {
-        #expect(PhotoDetailSwipe.action(distance: -50, velocity: -200) == nil)
-        #expect(PhotoDetailSwipe.action(distance: -101, velocity: 0) == .explore)
-        #expect(PhotoDetailSwipe.action(distance: -40, velocity: -900) == .explore)
-        #expect(PhotoDetailSwipe.action(distance: 20, velocity: -900) == nil)
-        #expect(PhotoDetailSwipe.action(distance: 101, velocity: 0) == .dismiss)
-        #expect(PhotoDetailSwipe.action(distance: 40, velocity: 900) == .dismiss)
+    @Test func inlinePullRequiresReleaseAndCancelsWhenRetractedOrInterrupted() {
+        var pull = RelatedPhotoPull()
+        pull.update(distance: 71, isDragging: true, hasMore: true)
+        let load1 = pull.finish(cancelled: false)
+        #expect(!load1)
+        pull.update(distance: 72, isDragging: true, hasMore: true)
+        #expect(pull.isArmed)
+        pull.update(distance: 40, isDragging: true, hasMore: true)
+        let load2 = pull.finish(cancelled: false)
+        #expect(!load2)
+        pull.update(distance: 100, isDragging: true, hasMore: true)
+        let load3 = pull.finish(cancelled: true)
+        #expect(!load3)
+        pull.update(distance: 100, isDragging: false, hasMore: true)
+        let load4 = pull.finish(cancelled: false)
+        #expect(!load4)
+        pull.update(distance: 100, isDragging: true, hasMore: false)
+        let load5 = pull.finish(cancelled: false)
+        #expect(!load5)
+        pull.update(distance: 72, isDragging: true, hasMore: true)
+        let load6 = pull.finish(cancelled: false)
+        #expect(load6)
+        let load7 = pull.finish(cancelled: false)
+        #expect(!load7)
     }
 }

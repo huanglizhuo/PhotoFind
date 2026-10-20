@@ -150,7 +150,7 @@ struct ContentView: View {
         } message: { _ in
             Text(String(localized: "将删除你在当前列表中选择的 \(pendingDeletion?.count ?? 0) 张照片。这些照片将从系统照片图库删除，而不只是从搜索结果移除。"))
         }
-        .fullScreenCover(isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { detailPhotoID != nil },
             set: { if !$0 { detailPhotoID = nil } }
         )) {

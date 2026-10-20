@@ -1,0 +1,8 @@
+{
+  "name": "photofind-model",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-20",
+  "account_id": "10e9768c4e1d97a3b679bbe516f5929f",
+  "workers_dev": true,
+  "r2_buckets": [{ "binding": "MODELS", "bucket_name": "shotsync" }]
+}

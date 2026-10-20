@@ -7,6 +7,7 @@ mode=${1:?Use test or release}
 cache="${PHOTO_FIND_CACHE:-$HOME/Library/Caches/PhotoFindCI}"
 simulator="${PHOTO_FIND_SIMULATOR:?Set the dedicated PhotoFind CI simulator UUID}"
 mkdir -p "$cache/SourcePackages" "$cache/Model" build
+node Cloudflare/model-download/worker.test.mjs
 xcodegen generate
 xcrun simctl boot "$simulator" 2>/dev/null || true
 xcrun simctl bootstatus "$simulator" -b
@@ -104,6 +105,15 @@ asc_ci builds upload --app-id 6823997811 --file build/Export/SemanticPhotos.ipa 
   --version "$version" --build-number "$build_number" --platform ios --wait > build/upload.json
 asc_ci builds list --app-id 6823997811 --version "$version" --platform ios --limit 100 > build/builds.json
 build_id=$(python3 Tools/release_checks.py build build/builds.json "$version" "$build_number")
-swift Tools/verify_testflight.swift "$build_id" 1910af7c-a927-495c-92be-a2b47c787691 > build/distribution.txt
+# Apple's internal-group assignment can lag behind successful build processing.
+distributed=false
+for attempt in {1..30}; do
+  if swift Tools/verify_testflight.swift "$build_id" 1910af7c-a927-495c-92be-a2b47c787691 > build/distribution.txt 2>&1; then
+    distributed=true
+    break
+  fi
+  sleep 30
+done
+[[ "$distributed" == true ]] || { cat build/distribution.txt; exit 1; }
 printf 'TestFlight %s (%s), build ID %s\n' "$version" "$build_number" "$build_id" | tee build/release-result.txt
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then cat build/release-result.txt >> "$GITHUB_STEP_SUMMARY"; fi

@@ -4,6 +4,123 @@ App Store Connect app: 6823997811. Bundle ID: com.clothpath.mondigital.
 Shipping targets: SemanticPhotos, SemanticPhotosShare, SemanticPhotosDownloader.
 The version and build number are shared in project.yml; CI overrides the build number for all targets.
 
+## R2 fallback release (21 October 2026)
+
+Apple-hosted delivery remains the first choice. On an Apple error or 30 seconds
+without byte progress, the app switches once to the HTTPS backup. A cancelled
+attempt never starts the backup; both sources remain retryable and stale callbacks
+cannot change the current attempt. Existing verified copies remain usable offline.
+The 388 MB backup streams to a temporary file, then uses the same pinned size and
+SHA-256 validation and atomic publication as Apple assets. The model bytes and
+embedding version have not changed, so the search index does not need rebuilding.
+
+The private `shotsync` bucket contains
+`embeddinggemma-2-text-vision-440m.litertlm` (387,710,976 bytes), SHA-256
+`92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0`.
+S3 multipart upload and full readback were verified. The Worker in
+`Cloudflare/model-download` exposes only this object's hash-qualified path, using
+GET/HEAD; it cannot list, upload or download other bucket objects. The app contains
+no R2 credentials. Deploy with `npx wrangler@4.151.3 deploy --config
+Cloudflare/model-download/wrangler.jsonc`; run its checks with
+`node Cloudflare/model-download/worker.test.mjs`.
+
+Download URL:
+https://photofind-model.clothpath.workers.dev/92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0/embeddinggemma-2-text-vision-440m.litertlm
+
+Verification before release:
+- Complete HTTP readback matched the size and SHA-256 above.
+- iPhone SE (3rd generation), iOS 27.0: the development app with the failing
+  Background Assets override downloaded and verified the model, then reached
+  photo selection. Existing device data was retained; photo access was not granted.
+- Fresh iPad Air 11-inch (M3) simulator, iPadOS 26.5: no injected model or previous
+  installation; real download, independent file hash verification and photo
+  selection passed. Exact review-device iPadOS 27.0 testing remains unavailable.
+- Full unit suite and model-download UI suite: 112 passed, none failed or skipped
+  (`build/R2Fallback-AllUnit.xcresult`). New failure and stall fallback regressions
+  failed before the implementation and pass after it.
+- Current working-tree photo detail, grid and similarity changes are included in
+  this release's review. UI regression results and the Actions build/submission
+  identifiers are recorded after the release finishes.
+
+The backup uses a foreground URLSession; an interrupted backup may restart on
+retry. It is subject to the Cloudflare account's Workers availability and limits.
+GitHub release CI now waits for Apple's delayed internal-group assignment rather
+than failing immediately after a build becomes VALID.
+
+## Review rejection follow-up (21 October 2026)
+
+This section supersedes the 18 October submission-status notes below.
+Submission `f434a2ac-484c-4797-ad30-2101892b4c0c` contains both the app and
+SemanticPhotosModel v1. App Store Connect reports the app rejected and the asset
+version accepted. The reviewer reported indefinite loading on iPad Air 11-inch
+(M3), iPadOS 27.0; the user also observed a Background Assets `PipelineNotFound`
+error in TestFlight 1.0 (5).
+
+Relaunching the installed build 5 on the connected iPhone SE (3rd generation),
+iOS 27.0, reached photo selection with resources ready. No reinstall or model
+injection was performed on that device. This does not establish the cause of
+the transient system error or prove a fresh install succeeds reliably.
+
+The local fix changes the required model pack from `prefetch` to `essential`,
+so its download participates in installation. The app also ends a download
+attempt after 120 seconds without byte progress and exposes retry without
+waiting for an unresponsive system call. Active downloads can take longer;
+late callbacks cannot overwrite a retry. Retry remains visible at the bottom
+of the download screen. Local model validation and the pinned model bytes are
+unchanged.
+
+TestFlight upload (21 October): app **1.0 (6)** was uploaded and processed
+as `VALID`, build ID `db2956c2-ddcc-489b-94d3-aa7341e09e8d`. Its beta state is
+`IN_BETA_TESTING`, and membership in the internal group `findImage` is verified.
+SemanticPhotosModel **v2**
+(`5ccad275-bd64-4ea3-8f15-341c338e6912`) is `READY_FOR_TESTING` and is the active
+internal beta asset version. The model bytes are unchanged; v2 publishes the
+new download policy.
+
+This upload was built locally from reviewed source `232e090` plus only the
+startup fix, isolated from unrelated working-tree changes. The isolated
+release suite passed 96 tests, none failed or skipped. Source, archive, IPA
+and logs are under `build/TestFlightStartupSource-20261021`; the patch is
+`build/startup-only.patch` and checksums are in
+`build/startup-release-receipt.json`. This release did not run through GitHub
+Actions. No App Store resubmission was made.
+
+The subsequent iPhone SE Xcode Run reported “A server with the specified
+hostname could not be found”; Xcode logged that refreshing the manifest
+failed. This is distinct from the earlier `PipelineNotFound` report.
+The installed app was development build 2. The device's Development Overrides
+contained `https://receptors-kid-biol-must-trycloudflare.com`, which failed DNS
+resolution. The normal Cloudflare quick-tunnel suffix is `.trycloudflare.com`;
+the entered URL uses a hyphen instead. Neither `ba-serve` nor `cloudflared`
+was running on the Mac. Correcting spelling alone does not establish a live
+development resource server. This development-path failure does not establish
+the cause of the earlier TestFlight `PipelineNotFound` error. No phone setting
+was changed during this check.
+
+Before resubmission:
+
+- Test a fresh TestFlight installation on a spare iPhone and iPad, with
+  Background Assets development overrides disabled and no injected model.
+  Preserve the user's existing app data; also test an upgrade separately.
+- Verify first launch, a failed/stalled connection and retry, then offline
+  relaunch. Simulator fixtures do not verify Apple-hosted delivery.
+- Include the new asset version with the corrected app submission after
+  physical-device acceptance.
+
+Local package: `build/SemanticPhotosModel-essential.aar` (generated and ignored
+by Git). `ba-package evaluate` and packaging succeeded; model SHA-256 matches
+the pinned value below.
+
+Validation: the stalled-request regression failed before the fix and passed
+after it. The ModelProvisioner, ModelFile and ModelDownload UI suites passed
+on iPhone 17e and iPad Pro 13-inch (M5) simulators running 26.5: 13 tests per
+run, none failed or skipped. Results: `build/ReviewStartupFix-iPhone.xcresult`
+and `build/ReviewStartupFix-iPad.xcresult`. Coverage includes connecting,
+stalled byte progress, pause, cancellation of an unresponsive request,
+successful retry, stale callbacks, active progress, model validation and
+visible retry controls. The exact review device/OS and fresh Apple-hosted
+delivery of the new pack remain unverified.
+
 ## Release acceptance
 
 - [x] Recoverable source/history backup made before cleanup.
