@@ -56,7 +56,25 @@ Release verification for source `a6624f7`: independent CI run `39986280424` and 
 TestFlight **1.0 (9)** is `VALID`, build ID `399befa1-d1bc-4556-981d-90335809d408`. [Self-hosted release run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39986330774) succeeded; independent ASC readback confirmed membership in `findImage`. Chinese and English beta notes were saved. App Store review was not resubmitted. No iPadOS 27 physical device was available.
 
 Earlier entries below describe previous builds and their historical verification.
-Formal review remains separate; the requested next distribution is TestFlight.
+### App Store resubmission (24 October 2026)
+
+At the user's explicit request, build **1.0 (9)** was submitted through ASC in
+submission `7882a0d8-6a64-4ee3-a6c0-c4afdec47095`. Independent readback confirmed
+both the submission and app version are `WAITING_FOR_REVIEW`, the selected build
+is `399befa1-d1bc-4556-981d-90335809d408`, and release type remains `MANUAL`.
+The new submission contains only the app version; no separate model asset was added.
+
+The rejected app item was removed from the old unresolved submission using
+`reviewSubmissionItems` PATCH `removed: true`. Apple initially retained the old
+association during `COMPLETING`; adding the version to the new draft succeeded
+after that transition. The previously accepted model v2 was left unchanged.
+
+English and Chinese App Store descriptions now explain that the model is bundled
+and initial preparation needs no extra download. Review notes describe the build 9
+fix, test steps, simulator validation, and the absence of physical iPadOS 27 testing.
+Submission readiness passed before sending. Receipts: `build/bundle9-review-submitted.json`,
+`build/bundle9-submitted-review-readback.json`, `build/bundle9-submitted-version.json`,
+and `build/bundle9-submitted-items.json`. Submission is not approval or public release.
 
 ## Second startup rejection follow-up (23 October 2026)
 
