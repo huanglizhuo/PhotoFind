@@ -34,6 +34,7 @@ Apple guidance applied:
 
 Sources:
 - https://developer.apple.com/documentation/foundation/bundle/url(forresource:withextension:)
+- https://developer.apple.com/documentation/bundleresources/information-property-list/bahasmanagedassetpacks
 - https://developer.apple.com/documentation/foundation/using-the-file-system-effectively
 - https://developer.apple.com/documentation/foundation/optimizing-your-app-s-data-for-icloud-backup
 - https://developer.apple.com/documentation/xcode/reducing-your-app-s-disk-usage
@@ -49,6 +50,10 @@ CI no longer injects a model into the simulator: tests exercise the bundled sour
 Local validation: `build/Bundled-iPad27.xcresult` passed 14 tests, none failed or skipped, on a newly created iPad Air 11-inch (M3), iPadOS 27.0 simulator. Coverage includes actual bundled-model size/hash, writable preparation, cache reuse, truncated-file repair, partial-download cleanup, cancellation, timeouts, retry and Chinese/English UI. The built app passed the independent bundle-resource check.
 
 A separate fresh iPadOS 27.0 simulator installation of the ARM64 Release build prepared the bundled model in 1.92 seconds and reached photo selection without any preloaded model. Full size/hash readback passed (`build/bundled-ipad27-first-launch.json`). This is simulator timing, not a real-device performance promise. Generic simulator builds include x86_64, which the upstream inference binaries do not support; the Release check uses the actual ARM64 simulator architecture.
+
+Release verification for source `a6624f7`: independent CI run `39986280424` and the release suite in run `39986330774` each passed 108 tests with no failures or unexpected skips. The signed 1.0 (9) archive contains exactly the main app and share extension, one valid model, and no BA predownload keys. Exported IPA: 337,030,188 bytes; archived app logical size: 431,632,498 bytes. These are build artifacts, not Apple's final device-specific download/install size.
+
+TestFlight **1.0 (9)** is `VALID`, build ID `399befa1-d1bc-4556-981d-90335809d408`. [Self-hosted release run](https://github.com/huanglizhuo/PhotoFind/actions/runs/39986330774) succeeded; independent ASC readback confirmed membership in `findImage`. Chinese and English beta notes were saved. App Store review was not resubmitted. No iPadOS 27 physical device was available.
 
 Earlier entries below describe previous builds and their historical verification.
 Formal review remains separate; the requested next distribution is TestFlight.
