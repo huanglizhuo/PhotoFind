@@ -14,7 +14,7 @@ Find the photo you have in mind. PhotoFind is an iPhone app that searches your l
 - **Search with an image** — find visually similar photos from a reference image.
 - **Explore by color** — browse your library through the continuous spectrum of Color Universe.
 - **Find text in screenshots** — combine recognized text with visual search.
-- **Keep photos private** — photos, queries, and indexes stay on your device. Indexed local photos are searchable offline after the initial model download.
+- **Keep photos private** — photos, queries, and indexes stay on your device. Indexed local photos are searchable offline after local model preparation.
 - **Organize what you find** — select, share, create albums, and delete with confirmation.
 - **Feel at home** — Chinese and English interfaces, with light, dark, and system appearance.
 
@@ -25,9 +25,13 @@ Find the photo you have in mind. PhotoFind is an iPhone app that searches your l
 | App icon | Original meerkat-and-photo composition in Icon Composer, with a separate background, Liquid Glass edge highlights, and system-rendered dark, clear, and tinted appearances. |
 | Native interface | Swift 6 and SwiftUI, with a reusable UIKit collection view for the photo grid. |
 | On-device AI | EmbeddingGemma text-and-image embeddings through MediaPipe, with a fixed 256-dimensional search index. |
-| Model delivery | Apple-hosted Background Assets download the model separately from the app. |
+| Model delivery | The pinned model ships inside the main app bundle; first launch requires no model download. |
 | Local storage | SQLite stores embeddings, photo metadata, recognized text, and indexing progress. |
 | Photo integration | PhotoKit manages authorized photo access, thumbnail caching, library changes, and photo actions. |
 | Text recognition | Apple Vision extracts text from screenshots for search. |
 | Responsive search | IME-aware input handling, a 500 ms debounce, adaptive inference spacing, cached query vectors, and only the latest waiting request. |
 | Incremental indexing | Later indexing passes normally process only new or modified photos. |
+
+## Build
+
+Run `bash Tools/fetch_model.sh` before `xcodegen generate`, then build the SemanticPhotos scheme. The fetch script validates the pinned model size and SHA-256; the generated project copies it into the main app only. CI performs the same preparation before tests and release archives.

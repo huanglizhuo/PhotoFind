@@ -2,14 +2,12 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Pin model bytes so an independent pack update cannot invalidate photo vectors.
+/// Pin model bytes so resource changes cannot silently invalidate photo vectors.
 enum ModelFile {
     static let version = "embeddinggemma-2-text-vision-440m"
     static let filename = "\(version).litertlm"
-    static let assetPackID = "SemanticPhotosModel"
     static let expectedSize: Int64 = 387_710_976
     static let sha256 = "92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0"
-    static let fallbackURL = URL(string: "https://photofind-model.clothpath.workers.dev/\(sha256)/\(filename)")!
     private static let preparationLock = NSLock()
     static var directory: URL {
         URL.applicationSupportDirectory.appendingPathComponent("Model", isDirectory: true)
@@ -17,7 +15,7 @@ enum ModelFile {
 
     enum ValidationError: LocalizedError {
         case invalidModel
-        var errorDescription: String? { String(localized: "模型文件不完整或版本不兼容，请重试下载。") }
+        var errorDescription: String? { String(localized: "模型文件不完整或版本不兼容，请重试；若仍失败，请重新安装 App。") }
     }
 
     /// Only fully verified, atomically published copies are reused offline.
@@ -29,9 +27,19 @@ enum ModelFile {
         return file
     }
 
-    /// LiteRT writes MLDrift caches beside this path, outside the managed pack.
+    static func prepareBundled(bundle: Bundle = .main, in root: URL = directory) throws -> URL {
+        guard let source = bundle.url(forResource: version, withExtension: "litertlm") else {
+            throw ValidationError.invalidModel
+        }
+        let ready = try prepare(from: source, in: root)
+        // Builds through 8 may leave an interrupted backup download after upgrading.
+        try? FileManager.default.removeItem(at: root.appendingPathComponent("\(sha256).partial"))
+        return ready
+    }
+
+    /// LiteRT writes MLDrift caches beside the model; the app bundle is read-only.
     static func prepare(from source: URL, in root: URL = directory) throws -> URL {
-        // A cancelled source can still be unwinding when the backup starts.
+        // A cancelled preparation can still be unwinding when a retry starts.
         preparationLock.lock()
         defer { preparationLock.unlock() }
         try Task.checkCancellation()

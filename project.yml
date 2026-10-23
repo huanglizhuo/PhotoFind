@@ -28,13 +28,12 @@ targets:
     platform: iOS
     sources:
       - path: SemanticPhotos
+      - path: Model/embeddinggemma-2-text-vision-440m.litertlm
+        buildPhase: resources
     dependencies:
       - package: MediaPipe
         product: MediaPipeTasksRetrieval
       - target: SemanticPhotosShare
-      - target: SemanticPhotosDownloader
-        embed: true
-      - sdk: BackgroundAssets.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital
@@ -52,26 +51,6 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait"
-        TARGETED_DEVICE_FAMILY: "1"
-        SWIFT_VERSION: "6.0"
-  SemanticPhotosDownloader:
-    type: extensionkit-extension
-    platform: iOS
-    sources:
-      - path: BackgroundAssets/Downloader
-        excludes:
-          - Info.plist
-          - Downloader.entitlements
-    dependencies:
-      - sdk: BackgroundAssets.framework
-      - sdk: StoreKit.framework
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.clothpath.mondigital.downloader
-        INFOPLIST_FILE: BackgroundAssets/Downloader/Info.plist
-        CODE_SIGN_ENTITLEMENTS: BackgroundAssets/Downloader/Downloader.entitlements
-        APPLICATION_EXTENSION_API_ONLY: YES
-        SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
   SemanticPhotosShare:

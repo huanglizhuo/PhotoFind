@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Fail publication on a skipped test, mismatched extension, or unprocessed build."""
+import hashlib
 import json
 from pathlib import Path
 import plistlib
 import subprocess
 import sys
+import tempfile
 
 
 def next_number(data, version, proposed):
@@ -21,10 +23,25 @@ def processed_build(data, version, number):
     return build['id']
 
 
+def bundled_model(app):
+    app = Path(app)
+    model = app / 'embeddinggemma-2-text-vision-440m.litertlm'
+    assert list(app.rglob('*.litertlm')) == [model], 'Bundle must contain exactly one model, in the main app'
+    assert model.stat().st_size == 387710976, 'Bundled model size mismatch'
+    digest = hashlib.sha256()
+    with model.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    assert digest.hexdigest() == '92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0', 'Bundled model hash mismatch'
+    info = plistlib.loads((app / 'Info.plist').read_bytes())
+    assert not any(key in info for key in ('BAHasManagedAssetPacks', 'BAUsesAppleHosting', 'BAAppGroupID')), 'Bundled builds must not request asset predownloads'
+    print('Bundled model validated: 387710976 bytes, pinned SHA-256, no asset predownload')
+
+
 def archive(path, version, number):
     app = Path(path) / 'Products/Applications/SemanticPhotos.app'
     bundles = [app, *app.glob('PlugIns/*.appex'), *app.glob('Extensions/*.appex')]
-    expected = {'com.clothpath.mondigital', 'com.clothpath.mondigital.share', 'com.clothpath.mondigital.downloader'}
+    expected = {'com.clothpath.mondigital', 'com.clothpath.mondigital.share'}
     actual = set()
     for bundle in bundles:
         info = plistlib.loads((bundle / 'Info.plist').read_bytes())
@@ -36,14 +53,14 @@ def archive(path, version, number):
         assert entitlements.get('com.apple.developer.team-identifier') == 'N9Q47Y2LQ4'
         assert not entitlements.get('get-task-allow', False), 'Development signing must not ship'
     assert actual == expected, actual
-    assert not list(app.rglob('*.litertlm')), 'Model must be delivered by Background Assets'
+    bundled_model(app)
     privacy = plistlib.loads((app / 'PrivacyInfo.xcprivacy').read_bytes())
     assert privacy['NSPrivacyTracking'] is False
     assert any(x['NSPrivacyAccessedAPIType'] == 'NSPrivacyAccessedAPICategoryFileTimestamp' for x in privacy['NSPrivacyAccessedAPITypes'])
     for locale, name in [('en', 'PhotoFind'), ('zh-Hans', '一句找图')]:
         strings = subprocess.check_output(['plutil', '-convert', 'json', '-o', '-', str(app / f'{locale}.lproj/InfoPlist.strings')])
         assert json.loads(strings)['CFBundleDisplayName'] == name
-    print(f'Archive validated: {version} ({number}), all three bundles')
+    print(f'Archive validated: {version} ({number}), both shipping bundles')
 
 
 def tests(path):
@@ -57,6 +74,8 @@ if __name__ == '__main__':
     mode, *args = sys.argv[1:]
     if mode == 'archive':
         archive(*args)
+    elif mode == 'model':
+        bundled_model(*args)
     elif mode == 'tests':
         tests(*args)
     elif mode == 'build':
@@ -78,6 +97,19 @@ if __name__ == '__main__':
             except AssertionError:
                 continue
             raise AssertionError('Invalid build accepted')
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({}))
+            model = app / 'embeddinggemma-2-text-vision-440m.litertlm'
+            for failure in ('missing', 'truncated', 'wrong-hash'):
+                if failure != 'missing':
+                    with model.open('wb') as stream:
+                        stream.truncate(3 if failure == 'truncated' else 387710976)
+                try:
+                    bundled_model(app)
+                except AssertionError:
+                    continue
+                raise AssertionError(f'Invalid model accepted: {failure}')
         print('Release checks self-test passed')
     else:
         raise SystemExit('Unknown check')

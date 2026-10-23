@@ -8,7 +8,6 @@
 <key>provisioningProfiles</key><dict>
 <key>com.clothpath.mondigital</key><string>PhotoFind App Store</string>
 <key>com.clothpath.mondigital.share</key><string>PhotoFind Share App Store</string>
-<key>com.clothpath.mondigital.downloader</key><string>PhotoFind Downloader App Store</string>
 </dict>
 <key>teamID</key><string>N9Q47Y2LQ4</string>
 <key>manageAppVersionAndBuildNumber</key><false/>

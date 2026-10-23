@@ -101,7 +101,7 @@ final class StartupExperienceUITests: XCTestCase {
     @MainActor
     func testStartupDarkLargeTypeAndReducedMotion() {
         let app = XCUIApplication()
-        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "checking"
+        app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = "checking"
         app.launchEnvironment["UITEST_DARK_MODE"] = "1"
         app.launchEnvironment["UITEST_REDUCE_MOTION"] = "1"
         app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]

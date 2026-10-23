@@ -46,7 +46,7 @@ struct ContentView: View {
             case .checking, .ready:
                 AppStartupView(phase: model.startupPhase)
             default:
-                ModelDownloadView()
+                ModelPreparationView()
             }
         } else if model.needsOnboarding {
             OnboardingView()

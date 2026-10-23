@@ -4,12 +4,6 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
-	<key>BAAppGroupID</key>
-	<string>group.com.clothpath.mondigital</string>
-	<key>BAHasManagedAssetPacks</key>
-	<true/>
-	<key>BAUsesAppleHosting</key>
-	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>processing</string>

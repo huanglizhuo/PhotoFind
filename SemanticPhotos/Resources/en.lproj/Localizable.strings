@@ -399,3 +399,15 @@
 
 "这张照片将从系统照片图库删除，而不只是从当前列表移除。" = "This photo will be deleted from your system photo library, not just removed from this list.";
 "显示或隐藏控制栏" = "Show or Hide Controls";
+"准备搜索资源" = "Prepare Search Resources";
+"搜索模型已随 App 安装，无需额外下载。首次使用时会在本机校验和准备。" = "The search model is included with the app. No extra download is needed. It is verified and prepared on this device on first use.";
+"模型准备好后，再授权相册并建立索引。照片始终在本机处理，不会上传；本地照片可以离线搜索。" = "Once the model is ready, grant photo access to start indexing. Photos are processed on this device and are never uploaded. Local photos can be searched offline.";
+"重试准备" = "Retry Preparation";
+"请检查可用储存空间后重试。" = "Check your available storage, then try again.";
+"模型准备超时，请重试。" = "Model preparation timed out. Please try again.";
+"模型文件不完整或版本不兼容，请重试；若仍失败，请重新安装 App。" = "The model is incomplete or incompatible. Try again; if the problem persists, reinstall the app.";
+"安装后可离线使用" = "Available Offline After Installation";
+"搜索模型和城市库已内置，首次准备无需联网，照片不会上传。iCloud 照片由系统按需下载；默认不会主动下载索引图，需要时由你选择。" = "The search model and city database are included. Initial preparation works offline, and photos are never uploaded. iCloud photos are downloaded by the system as needed; indexing does not download them unless you choose to allow it.";
+"正在检查内置模型的本地副本，无需联网。" = "Checking the local copy of the bundled model. No internet connection is needed.";
+"可离线搜索" = "Search Offline";
+"文件大小为逻辑大小；不含 App 本体（含内置模型）、系统照片及系统缓存。" = "Sizes are logical file sizes. The app itself (including the bundled model), system photos and system caches are excluded.";

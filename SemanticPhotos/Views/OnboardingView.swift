@@ -21,7 +21,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 16) {
                     point("iphone", String(localized: "照片不上传"), String(localized: "照片只在这台设备上处理。"))
-                    point("wifi.slash", String(localized: "下载后可离线搜索"), String(localized: "无需联网就能搜索已整理的本地照片。"))
+                    point("wifi.slash", String(localized: "可离线搜索"), String(localized: "无需联网就能搜索已整理的本地照片。"))
                     point("photo.on.rectangle", String(localized: "只处理你授权的照片"), String(localized: "可以选择部分照片，也可以允许访问整个相册。"))
                 }
                 Button(String(localized: "了解更多")) { showMore = true }

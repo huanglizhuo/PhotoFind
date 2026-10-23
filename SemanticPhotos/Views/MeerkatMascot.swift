@@ -18,7 +18,7 @@ enum StartupPhase: String {
 
     var detail: String {
         switch self {
-        case .checkingModel: String(localized: "确认下载的模型是否可用，无需每次重新下载。")
+        case .checkingModel: String(localized: "正在检查内置模型的本地副本，无需联网。")
         case .readingIndex: String(localized: "正在恢复本机保存的整理结果。")
         case .checkingLibrary: String(localized: "可以先浏览照片，已有整理进度会保留。")
         case .preparingSearch: String(localized: "可以先输入关键词，准备好后自动搜索。")

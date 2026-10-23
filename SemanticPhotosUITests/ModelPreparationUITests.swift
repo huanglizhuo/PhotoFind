@@ -1,10 +1,10 @@
 import XCTest
 
-final class ModelDownloadUITests: XCTestCase {
+final class ModelPreparationUITests: XCTestCase {
     @MainActor
     func testLocalCheckShowsStartupWithoutDownloadInstructions() {
         let app = XCUIApplication()
-        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "checking"
+        app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = "checking"
         app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["appStartupScreen"].firstMatch.waitForExistence(timeout: 15))
@@ -13,21 +13,21 @@ final class ModelDownloadUITests: XCTestCase {
         shot.name = "meerkat-startup"
         shot.lifetime = .keepAlways
         add(shot)
-        XCTAssertFalse(app.descendants(matching: .any)["modelDownloadScreen"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["modelPreparationScreen"].exists)
         XCTAssertFalse(app.staticTexts["正在校验和准备模型…"].exists)
         XCTAssertFalse(app.buttons["startPhotoIndexing"].exists)
         app.terminate()
     }
 
     @MainActor
-    func testDownloadBlocksSearchAndPhotoPermission() {
+    func testPreparationBlocksSearchAndPhotoPermission() {
         let app = XCUIApplication()
-        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "downloading"
+        app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = "preparing"
         app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["正在下载模型 · 50%"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["正在校验和准备模型…"].waitForExistence(timeout: 15))
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "meerkat-download"
+        shot.name = "meerkat-preparation"
         shot.lifetime = .keepAlways
         add(shot)
         XCTAssertFalse(app.textFields.firstMatch.exists)
@@ -37,13 +37,13 @@ final class ModelDownloadUITests: XCTestCase {
     }
 
     @MainActor
-    func testConnectingCanRetryWithoutWaitingForTimeout() {
+    func testPreparationCanRetryWithoutWaitingForTimeout() {
         let app = XCUIApplication()
-        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "retry"
+        app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = "retry"
         app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["正在连接模型下载…"].waitForExistence(timeout: 15))
-        let retry = app.buttons["retryModelDownload"]
+        XCTAssertTrue(app.staticTexts["正在校验和准备模型…"].waitForExistence(timeout: 15))
+        let retry = app.buttons["retryModelPreparation"]
         XCTAssertTrue(retry.isHittable)
         retry.tap()
         XCTAssertTrue(app.staticTexts["模型准备失败"].waitForExistence(timeout: 10))
@@ -54,10 +54,10 @@ final class ModelDownloadUITests: XCTestCase {
     @MainActor
     func testFailureOffersRetryAndKeepsSearchBlocked() {
         let app = XCUIApplication()
-        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "failed"
+        app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = "failed"
         app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        let retry = app.buttons["retryModelDownload"]
+        let retry = app.buttons["retryModelPreparation"]
         XCTAssertTrue(retry.waitForExistence(timeout: 15))
         XCTAssertTrue(retry.isHittable, "Retry must be visible without scrolling past the error")
         XCTAssertTrue(app.staticTexts["模型准备失败"].exists)

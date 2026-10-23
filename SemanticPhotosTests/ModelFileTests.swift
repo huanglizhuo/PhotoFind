@@ -3,8 +3,36 @@ import Testing
 @testable import SemanticPhotos
 
 struct ModelFileTests {
-    @Test func modelIsNotBundled() {
-        #expect(Bundle.main.url(forResource: ModelFile.version, withExtension: "litertlm") == nil)
+    @Test func bundledModelPreparesOfflineAndRepairsTruncatedCopy() throws {
+        let source = try #require(Bundle.main.url(forResource: ModelFile.version, withExtension: "litertlm"))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ready = try ModelFile.prepareBundled(in: root)
+        #expect(ready != source)
+        #expect(ModelFile.localURL(in: root) == ready)
+        #expect(try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        try ModelFile.validate(ready, size: ModelFile.expectedSize, sha256: ModelFile.sha256)
+        let partial = root.appendingPathComponent("\(ModelFile.sha256).partial")
+        try Data("interrupted build 8 download".utf8).write(to: partial)
+        let cache = ready.deletingLastPathComponent().appendingPathComponent("inference-cache")
+        try Data("preserve".utf8).write(to: cache)
+        #expect(try ModelFile.prepareBundled(in: root) == ready)
+        #expect(try Data(contentsOf: cache) == Data("preserve".utf8))
+        #expect(!FileManager.default.fileExists(atPath: partial.path))
+        try Data("truncated".utf8).write(to: ready)
+        #expect(ModelFile.localURL(in: root) == nil)
+        #expect(try ModelFile.prepareBundled(in: root) == ready)
+        try ModelFile.validate(source, size: ModelFile.expectedSize, sha256: ModelFile.sha256)
+        try ModelFile.validate(ready, size: ModelFile.expectedSize, sha256: ModelFile.sha256)
+    }
+
+    @Test func missingBundledResourceFailsWithoutNetworkFallback() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: ModelFile.ValidationError.self) {
+            try ModelFile.prepareBundled(bundle: Bundle(for: NSObject.self), in: root)
+        }
+        #expect(ModelFile.localURL(in: root) == nil)
     }
 
     @Test func verifiesSizeAndHash() throws {

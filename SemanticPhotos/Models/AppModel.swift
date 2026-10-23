@@ -314,7 +314,7 @@ final class AppModel {
         }
     }
 
-    /// Download and validate before any inference or persisted queue is restored.
+    /// Prepare bundled resources before any inference or persisted queue is restored.
     func prepareModel() {
         guard modelPreparationTask == nil, !isModelReady else { return }
         modelPreparationTask = Task {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SetupSteps: View {
     let current: Int
-    private let steps = [String(localized: "下载搜索资源"), String(localized: "选择照片"), String(localized: "整理照片")]
+    private let steps = [String(localized: "准备搜索资源"), String(localized: "选择照片"), String(localized: "整理照片")]
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {

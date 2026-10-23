@@ -1,8 +1,57 @@
 # Release and testing
 
 App Store Connect app: 6823997811. Bundle ID: com.clothpath.mondigital.
-Shipping targets: SemanticPhotos, SemanticPhotosShare, SemanticPhotosDownloader.
+Shipping targets: SemanticPhotos and SemanticPhotosShare. The legacy downloader extension is no longer embedded.
 The version and build number are shared in project.yml; CI overrides the build number for all targets.
+
+## Bundled model (24 October 2026)
+
+The model is now a normal Copy Bundle Resources entry in the main app only.
+The model bytes and index version are unchanged. Startup never invokes Background
+Assets or the R2 fallback. The downloader target/dependency and BA Info.plist keys
+are removed from shipping builds. Existing R2/Apple assets are retained for users
+of older builds; do not delete or replace them as part of this migration.
+
+Local preparation reuses the existing verified hash-addressed copy, or clones the
+bundled file into Application Support, validates size/SHA-256 with 1 MiB reads,
+and atomically publishes it. LiteRT writes cache files beside the model, so it
+cannot use the read-only bundle path directly. Preparation runs off the UI actor.
+The writable model directory remains excluded from backup. Successful preparation
+removes this model's obsolete `.partial` download; photos and indexes are unchanged.
+A failed preparation exposes Retry and has a 60-second deadline.
+
+Apple guidance applied:
+- Resolve resources through `Bundle.url(forResource:withExtension:)`, not an
+  installation path. Keep one unlocalized copy in the main app, none in extensions.
+- Treat the app bundle as read-only; use Application Support for required writable
+  support files. Exclude recreatable files from backups.
+- Prefer APFS cloning, stream validation rather than loading the whole model into
+  memory, and reuse validated local files. Cloning can fall back to copying, so
+  do not promise that physical storage always contains just one model's worth.
+- Measure the exported app, not only source/archive size; actual App Store download
+  size depends on compression and device thinning. iOS/iPadOS allow a 4 GB
+  uncompressed app; this 387,710,976-byte model is a resource, not executable code.
+
+Sources:
+- https://developer.apple.com/documentation/foundation/bundle/url(forresource:withextension:)
+- https://developer.apple.com/documentation/foundation/using-the-file-system-effectively
+- https://developer.apple.com/documentation/foundation/optimizing-your-app-s-data-for-icloud-backup
+- https://developer.apple.com/documentation/xcode/reducing-your-app-s-disk-usage
+- https://developer.apple.com/documentation/xcode/reducing-your-app-s-size
+- https://developer.apple.com/help/app-store-connect/reference/app-uploads/maximum-build-file-sizes/
+
+Build preparation runs `Tools/fetch_model.sh` before XcodeGen. The model stays out
+of Git. Both the test product and release archive must contain exactly one model
+with the pinned size/hash and no BA predownload keys. Archive checks also require
+exactly the main app and share extension, matching versions and distribution signing.
+CI no longer injects a model into the simulator: tests exercise the bundled source.
+
+Local validation: `build/Bundled-iPad27.xcresult` passed 14 tests, none failed or skipped, on a newly created iPad Air 11-inch (M3), iPadOS 27.0 simulator. Coverage includes actual bundled-model size/hash, writable preparation, cache reuse, truncated-file repair, partial-download cleanup, cancellation, timeouts, retry and Chinese/English UI. The built app passed the independent bundle-resource check.
+
+A separate fresh iPadOS 27.0 simulator installation of the ARM64 Release build prepared the bundled model in 1.92 seconds and reached photo selection without any preloaded model. Full size/hash readback passed (`build/bundled-ipad27-first-launch.json`). This is simulator timing, not a real-device performance promise. Generic simulator builds include x86_64, which the upstream inference binaries do not support; the Release check uses the actual ARM64 simulator architecture.
+
+Earlier entries below describe previous builds and their historical verification.
+Formal review remains separate; the requested next distribution is TestFlight.
 
 ## Second startup rejection follow-up (23 October 2026)
 
@@ -282,7 +331,7 @@ The previous build 3 was valid, but its workflow failed on redundant manual assi
 
 Unchecked items are not claimed complete. Update this file with verified outcomes and build/run links.
 
-## Model
+## Legacy separately hosted model (builds through 8)
 
 Pack ID: SemanticPhotosModel. Filename: embeddinggemma-2-text-vision-440m.litertlm.
 Size: 387710976 bytes. SHA-256: 92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0.
@@ -299,7 +348,7 @@ Development downloads use Apple's ba-serve and a trusted TLS URL configured in S
 ## Boundaries
 
 CI fixtures must contain synthetic photos only. Never upload private photos, credentials, provisioning profiles, model binaries or diagnostic attachments containing personal information to this public repository.
-Formal App Store review is intentionally separate from the TestFlight workflow. The first app and its required asset pack must be submitted together.
+Formal App Store review is intentionally separate from the TestFlight workflow. Bundled-model builds do not require a separate model asset submission.
 
 ## GitHub Actions
 
@@ -311,13 +360,13 @@ Formal App Store review is intentionally separate from the TestFlight workflow. 
 - Xcode is selected with `DEVELOPER_DIR`. Installed tools: XcodeGen, asc-cli 0.18.6, Python 3, curl.
 - TestFlight environment allows main only and stores ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY and CI_KEYCHAIN_PASSWORD. The job uses a temporary private key file and removes it on exit.
 - Repository variable PHOTO_FIND_SIMULATOR identifies the dedicated CI simulator. Dependencies/model cache live in `~/Library/Caches/PhotoFindCI`.
-- CI verifies the public model's pinned hash before staging it in the simulator. It tests real text/image inference, unit tests and download-state UI fixtures. This does not prove Apple-hosted delivery.
+- CI verifies the public model's pinned hash before copying it into the app bundle. It tests real text/image inference, unit tests and local preparation UI fixtures.
 - The standalone first-keyboard timing benchmark is explicitly excluded from CI: it requires a prepared library/device and must be measured separately. Unexpected skipped tests fail CI.
-- Source code alone cannot reproduce Apple-hosted downloads in a simulator. Fresh TestFlight/device acceptance remains a separate release gate.
+- Fresh TestFlight/device acceptance remains a separate release gate; simulator tests do not establish real-device performance.
 
 To publish another build: GitHub → Actions → Publish TestFlight → Run workflow → main. The build number is greater than both processed builds and upload records (including failed/pending attempts), not manually incremented in several targets. Do not concurrently upload the same marketing version outside this pipeline.
 
-The dedicated keychain contains only the selected distribution identity (expires 25 April 2027). CI downloads the three named PhotoFind App Store profiles, signs manually and verifies get-task-allow is false. Renew the certificate/profiles before expiration. Other apps’ runners and keychains are retained.
+The dedicated keychain contains only the selected distribution identity (expires 25 April 2027). CI downloads the two named PhotoFind App Store profiles, signs manually and verifies get-task-allow is false. Renew the certificate/profiles before expiration. Other apps’ runners and keychains are retained.
 
 Privacy declaration: published “Data Not Collected” after explicit confirmation. Policy URL and support URL saved in App Store Connect. Age rating configured (4+), categories Photo & Video / Utilities, no review login required, model-download review notes saved. The first release is free in all 175 current territories by user instruction, with manual release after approval. China mainland ICP information remains unresolved. Apple-hosted SemanticPhotosModel v1 is Ready for Internal Testing (314 MB compressed).
 

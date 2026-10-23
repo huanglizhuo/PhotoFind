@@ -63,7 +63,7 @@ struct AboutView: View {
 
             Section {
                 point("iphone", String(localized: "数据不出设备"), String(localized: "照片、向量、识别出的文字和搜索记录只保存在本机，不上传。"))
-                point("wifi.slash", String(localized: "模型下载后可离线使用"), String(localized: "首次使用需联网下载模型，照片不会上传。地点名称来自内置离线城市库。iCloud 照片由系统按需下载；默认不会主动下载索引图，需要时由你选择。"))
+                point("wifi.slash", String(localized: "安装后可离线使用"), String(localized: "搜索模型和城市库已内置，首次准备无需联网，照片不会上传。iCloud 照片由系统按需下载；默认不会主动下载索引图，需要时由你选择。"))
                 point("chart.bar.xaxis", String(localized: "不收集任何数据"), String(localized: "没有统计和埋点。App Store 隐私标签为“不收集数据”。"))
                 point("text.viewfinder", String(localized: "只对截图识别文字"), String(localized: "为了不拖慢首次索引，目前只识别截图里的文字；其他照片用画面描述搜索。"))
                 point("photo.on.rectangle", String(localized: "只索引照片"), String(localized: "视频和实况照片的动态部分不参与搜索；实况照片按静态图索引与分享。"))

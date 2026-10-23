@@ -7,7 +7,8 @@ mode=${1:?Use test or release}
 cache="${PHOTO_FIND_CACHE:-$HOME/Library/Caches/PhotoFindCI}"
 simulator="${PHOTO_FIND_SIMULATOR:?Set the dedicated PhotoFind CI simulator UUID}"
 mkdir -p "$cache/SourcePackages" "$cache/Model" build
-node Cloudflare/model-download/worker.test.mjs
+[[ -e Model ]] || ln -s "$cache/Model" Model
+bash Tools/fetch_model.sh
 xcodegen generate
 xcrun simctl boot "$simulator" 2>/dev/null || true
 xcrun simctl bootstatus "$simulator" -b
@@ -16,27 +17,15 @@ xcodebuild -project SemanticPhotos.xcodeproj -scheme SemanticPhotos \
   -destination "platform=iOS Simulator,id=$simulator" \
   -derivedDataPath build/CI -clonedSourcePackagesDirPath "$cache/SourcePackages" \
   CODE_SIGNING_ALLOWED=NO build-for-testing > build/test-build.log 2>&1 || { tail -60 build/test-build.log; exit 1; }
-[[ -e Model ]] || ln -s "$cache/Model" Model
-bash Tools/fetch_model.sh
-xcrun simctl install "$simulator" build/CI/Build/Products/Debug-iphonesimulator/SemanticPhotos.app
-container=$(xcrun simctl get_app_container "$simulator" com.clothpath.mondigital data)
-python3 - "$container" <<'PY'
-import hashlib, pathlib, shutil, sys
-source = pathlib.Path('Model/embeddinggemma-2-text-vision-440m.litertlm')
-sha = '92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0'
-assert source.stat().st_size == 387710976 and hashlib.sha256(source.read_bytes()).hexdigest() == sha
-folder = pathlib.Path(sys.argv[1]) / 'Library/Application Support/Model' / sha
-folder.mkdir(parents=True, exist_ok=True)
-shutil.copyfile(source, folder / source.name)
-(folder / 'verified').write_text(sha)
-PY
+python3 Tools/release_checks.py model build/CI/Build/Products/Debug-iphonesimulator/SemanticPhotos.app
 xcodebuild -project SemanticPhotos.xcodeproj -scheme SemanticPhotos \
   -destination "platform=iOS Simulator,id=$simulator" \
   -derivedDataPath build/CI -clonedSourcePackagesDirPath "$cache/SourcePackages" \
   -parallel-testing-enabled NO -resultBundlePath "build/Tests-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}.xcresult" \
   -only-testing:SemanticPhotosTests \
   -skip-testing:SemanticPhotosTests/PerformanceTests/testFirstSearchFocusResponsiveness \
-  -only-testing:SemanticPhotosUITests/ModelDownloadUITests \
+  -only-testing:SemanticPhotosUITests/ModelPreparationUITests \
+  -only-testing:SemanticPhotosUITests/LocalizationAppearanceUITests/testEnglishPreparationAndFailure \
   CODE_SIGNING_ALLOWED=NO test-without-building > build/tests.log 2>&1 || { tail -80 build/tests.log; exit 1; }
 python3 Tools/release_checks.py tests "build/Tests-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}.xcresult"
 [[ "$mode" == release ]] || exit 0
@@ -66,7 +55,7 @@ keychain = str(pathlib.Path.home() / 'Library/Keychains/photofind-ci.keychain-db
 subprocess.run(['security', 'unlock-keychain', '-p', os.environ['CI_KEYCHAIN_PASSWORD'], keychain], check=True, capture_output=True)
 profiles = pathlib.Path.home() / 'Library/Developer/Xcode/UserData/Provisioning Profiles'
 profiles.mkdir(parents=True, exist_ok=True)
-expected = {'PhotoFind App Store': 'TJGTSMJT2W', 'PhotoFind Share App Store': '44VF4NZK55', 'PhotoFind Downloader App Store': '8H7U5B5RPQ'}
+expected = {'PhotoFind App Store': 'TJGTSMJT2W', 'PhotoFind Share App Store': '44VF4NZK55'}
 found = set()
 for p in json.load(open(sys.argv[1]))['data']:
     if p['name'] not in expected:
@@ -80,7 +69,7 @@ unset CI_KEYCHAIN_PASSWORD
 # CI signing is explicit; the normal development project keeps automatic signing.
 ruby -ryaml -rjson -e '
 spec = YAML.load_file("project.yml")
-{"SemanticPhotos" => "PhotoFind App Store", "SemanticPhotosShare" => "PhotoFind Share App Store", "SemanticPhotosDownloader" => "PhotoFind Downloader App Store"}.each do |target, profile|
+{"SemanticPhotos" => "PhotoFind App Store", "SemanticPhotosShare" => "PhotoFind Share App Store"}.each do |target, profile|
   spec["targets"][target]["settings"]["base"].merge!({"CODE_SIGN_STYLE" => "Manual", "CODE_SIGN_IDENTITY" => "93A4223AB109F4BC046C1E8DD71E0056F3EFC545", "PROVISIONING_PROFILE_SPECIFIER" => profile})
 end
 File.write("build/ci-project.json", JSON.generate(spec))'

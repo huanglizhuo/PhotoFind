@@ -15,7 +15,7 @@ struct StorageManagementView: View {
                     LabeledContent(String(localized: "照片索引"), value: Self.size(usage.index))
                     LabeledContent(String(localized: "临时分享文件"), value: Self.size(usage.share))
                 } else { ProgressView(String(localized: "正在统计…")) }
-                Text(String(localized: "文件大小为逻辑大小；Apple 管理的下载资源包、系统照片及系统缓存不计入。"))
+                Text(String(localized: "文件大小为逻辑大小；不含 App 本体（含内置模型）、系统照片及系统缓存。"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section {

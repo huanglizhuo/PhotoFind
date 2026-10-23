@@ -1,6 +1,6 @@
 #!/bin/bash
-# Download the EmbeddingGemma 2 model for the Apple-hosted asset pack.
-# Dev-machine only; the file is NOT committed to git (see .gitignore).
+# Fetch the pinned EmbeddingGemma 2 model before generating/building the app.
+# Build-time only; the file is bundled as a resource, not committed to git.
 # Public upstream only. Verifies size + SHA-256.
 set -euo pipefail
 

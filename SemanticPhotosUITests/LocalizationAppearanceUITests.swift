@@ -9,7 +9,7 @@ final class LocalizationAppearanceUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-uitestPauseIndexing", "-AppleLanguages", "(\(language))",
                                "-AppleLocale", language == "en" ? "en_US" : "zh_CN"]
-        if let state { app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = state }
+        if let state { app.launchEnvironment["MODEL_PREPARATION_UI_TEST"] = state }
         app.launch()
         return app
     }
@@ -41,15 +41,15 @@ final class LocalizationAppearanceUITests: XCTestCase {
     }
 
     @MainActor
-    func testEnglishDownloadAndFailure() {
-        var app = launch("en", state: "downloading")
-        XCTAssertTrue(app.staticTexts["Downloading model · 50%"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.staticTexts["下载搜索资源"].exists)
-        capture(app, "english-download")
+    func testEnglishPreparationAndFailure() {
+        var app = launch("en", state: "preparing")
+        XCTAssertTrue(app.staticTexts["Verifying and preparing the model…"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["准备搜索资源"].exists)
+        capture(app, "english-preparation")
         app.terminate()
         app = launch("en", state: "failed")
         XCTAssertTrue(app.staticTexts["Model Preparation Failed"].waitForExistence(timeout: 15))
-        XCTAssertEqual(app.buttons["retryModelDownload"].label, "Retry Download")
+        XCTAssertEqual(app.buttons["retryModelPreparation"].label, "Retry Preparation")
         app.terminate()
     }
 
