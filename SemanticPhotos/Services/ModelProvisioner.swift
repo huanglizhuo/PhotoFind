@@ -21,6 +21,9 @@ final class ModelProvisioner {
     private let preparation: Preparation
     private let fallback: Preparation?
     private let stallTimeout: Duration
+    #if DEBUG
+    private static var fixtureAttempts = 0
+    #endif
 
     private enum DownloadError: LocalizedError {
         case packUnavailable
@@ -37,7 +40,7 @@ final class ModelProvisioner {
         self.init(fallback: ModelProvisioner.downloadFallback, preparation: ModelProvisioner.download)
     }
 
-    init(stallTimeout: Duration = .seconds(30),
+    init(stallTimeout: Duration = .seconds(60),
          fallback: Preparation? = nil,
          preparation: @escaping Preparation) {
         self.stallTimeout = stallTimeout
@@ -127,24 +130,76 @@ final class ModelProvisioner {
             throw URLError(.notConnectedToInternet)
         }
         #endif
-        let (temporary, response) = try await downloadBackupFile(from: ModelFile.fallbackURL, update: update)
-        defer { try? FileManager.default.removeItem(at: temporary) }
+        let partial = ModelFile.directory.appendingPathComponent("\(ModelFile.sha256).partial")
+        let temporary = try await downloadBackupFile(from: ModelFile.fallbackURL, partial: partial,
+                                                      expectedSize: ModelFile.expectedSize, update: update)
         try Task.checkCancellation()
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         update(.preparing)
-        return try await prepareFile(from: temporary)
+        do {
+            let ready = try await prepareFile(from: temporary)
+            try? FileManager.default.removeItem(at: temporary)
+            return ready
+        } catch let error as ModelFile.ValidationError {
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
     }
 
-    static func downloadBackupFile(from url: URL,
-                                   update: @escaping @MainActor @Sendable (State) -> Void) async throws -> (URL, URLResponse) {
+    static func downloadBackupFile(from url: URL, partial: URL, expectedSize: Int64,
+                                   update: @escaping @MainActor @Sendable (State) -> Void) async throws -> URL {
+        let files = FileManager.default
+        var directory = partial.deletingLastPathComponent()
+        try files.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
+        if !files.fileExists(atPath: partial.path) { try Data().write(to: partial) }
+        var offset = Int64(try partial.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        if offset > expectedSize {
+            try Data().write(to: partial, options: .atomic)
+            offset = 0
+        }
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 3600
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let progress = Progress(totalUnitCount: ModelFile.expectedSize)
-        update(.downloading(progress))
-        return try await session.download(from: url, delegate: ModelDownloadProgress(update: update))
+        // Persist complete 8 MiB chunks; interruption re-downloads at most the current chunk.
+        while offset < expectedSize {
+            try Task.checkCancellation()
+            let end = min(offset + 8 * 1024 * 1024, expectedSize) - 1
+            let length = end - offset + 1
+            var request = URLRequest(url: url)
+            request.setValue("bytes=\(offset)-\(end)", forHTTPHeaderField: "Range")
+            let progress = Progress(totalUnitCount: expectedSize)
+            progress.completedUnitCount = offset
+            update(.downloading(progress))
+            let (temporary, response) = try await session.download(for: request, delegate: ModelDownloadProgress { state in
+                if case .downloading(let child?) = state {
+                    progress.addChild(child, withPendingUnitCount: length)
+                }
+            })
+            defer { try? files.removeItem(at: temporary) }
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            let size = Int64(try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+            if response.statusCode == 200, size == expectedSize {
+                // A server may ignore Range: replace, never append a full response.
+                _ = try files.replaceItemAt(partial, withItemAt: temporary)
+                return partial
+            }
+            guard response.statusCode == 206,
+                  response.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(end)/\(expectedSize)",
+                  size == length else { throw URLError(.badServerResponse) }
+            // Commit without suspension so a cancelled attempt cannot race a retry's append.
+            let file = try FileHandle(forWritingTo: partial)
+            defer { try? file.close() }
+            guard try file.seekToEnd() == UInt64(offset) else { throw CancellationError() }
+            try file.write(contentsOf: Data(contentsOf: temporary, options: .mappedIfSafe))
+            try file.synchronize()
+            offset += length
+        }
+        return partial
     }
 
     private static func prepareFile(from source: URL) async throws -> URL {
@@ -158,6 +213,13 @@ final class ModelProvisioner {
         #if DEBUG
         // Deterministic download-screen tests without Apple servers or photo access.
         if let fixture = ProcessInfo.processInfo.environment["MODEL_DOWNLOAD_UI_TEST"] {
+            if fixture == "retry" {
+                fixtureAttempts += 1
+                if fixtureAttempts == 1 {
+                    update(.downloading(nil))
+                    try await Task.sleep(for: .seconds(120))
+                }
+            }
             if fixture == "checking" {
                 try await Task.sleep(for: .seconds(120))
             }

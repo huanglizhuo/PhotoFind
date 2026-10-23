@@ -27,8 +27,10 @@ struct ModelDownloadView: View {
         .contentMargins(.top, 24)
         .accessibilityIdentifier("modelDownloadScreen")
         .safeAreaInset(edge: .bottom) {
-            if case .failed = model.modelProvisioner.state {
-                Button(String(localized: "重试下载"), action: model.prepareModel)
+            if case .ready = model.modelProvisioner.state {
+                EmptyView()
+            } else {
+                Button(String(localized: "重试下载"), action: model.retryModelPreparation)
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("retryModelDownload")
                     .padding()

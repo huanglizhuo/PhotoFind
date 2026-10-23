@@ -48,6 +48,48 @@ AssetPackManager initialization there, so it is not a valid distribution test.
 The user requested a TestFlight testing build first, with no review resubmission.
 Model bytes, model asset v2, R2 object, and the persisted index format are unchanged.
 
+### Retry and resumable backup follow-up
+
+At the user's request, the idle timeout is now 60 seconds for both the watchdog
+and backup HTTP requests. The download screen exposes Retry while connecting,
+downloading, paused, preparing, or failed. Retry cancels the previous preparation
+and waits for its owner to finish before starting another attempt; no photo/index
+data is cleared. Local startup checks retain their existing separate startup UI.
+
+The backup saves complete 8 MiB ranges in an Application Support partial file
+keyed by the pinned model hash, excluded from backup. Subsequent attempts and
+process launches start at the saved file length. A cancelled attempt checks
+cancellation before committing a range; each append commits without actor
+suspension. The server's 206 status, exact Content-Range and downloaded range
+size are checked before append. If a server ignores Range and returns a complete
+200 response, the existing partial is replaced, never concatenated. A completed
+model still requires the pinned full-file size and SHA-256 validation. Invalid
+models are discarded; recoverable failures preserve the partial for retry.
+The unfinished range may be downloaded again (at most 8 MiB); the backup remains
+a foreground transfer and is not promised to continue while iOS suspends the app.
+
+The Worker now supports bounded/open-ended single byte ranges, If-Range ETag
+matching, 206/416 responses, and HEAD/Accept-Ranges. The private bucket/object
+and exact-path access restriction are unchanged. Worker version
+`19a87072-3282-4cd0-aeff-b7fdfc0e50eb` was deployed; live readback of 1 KiB from
+offset 8 MiB matched the original model (`build/review8-worker-range-receipt.json`).
+
+Validation:
+- 18 focused tests passed with no failures/skips in
+  `build/Review8-ResumeAndRetry2.xcresult`, including a connecting-state retry UI
+  test and real loopback HTTP cases for failure, cancellation, wrong Content-Range,
+  and a server ignoring Range. Completed partial bytes survive retries and the
+  final payload matches exactly.
+- A fresh iPad Air M3 / iPadOS 26.5 simulator ran the Release build against R2.
+  Manual Retry preserved progress. After terminating the process with 310,378,496
+  bytes saved, relaunch issued ten successful 206 requests totaling 77,423,367
+  response bytes (including protocol overhead), rather than fetching 388 MB again.
+  The completed 387,710,976-byte file matched the pinned SHA-256 and reached photo
+  selection. Receipts: `build/review8-resume-checkpoints.json`,
+  `build/review8-resume-network.log`, `build/review8-resume-ready.png`.
+- The earlier partial-fix release workflow `39970875036` was cancelled before
+  publication so the final TestFlight build can include retry and resumption.
+
 ## R2 fallback release (21 October 2026)
 
 Apple-hosted delivery remains the first choice. On an Apple error or 30 seconds

@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Synchronization
 import Testing
 @testable import SemanticPhotos
 
@@ -246,23 +247,24 @@ struct ModelProvisionerTests {
             listener.start(queue: .global())
         }
         let source = try #require(URL(string: "http://127.0.0.1:\(port.rawValue)/model"))
+        let partial = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("model.partial")
+        defer { try? FileManager.default.removeItem(at: partial.deletingLastPathComponent()) }
         var sawBytesBeforeCompletion = false
         let provisioner = ModelProvisioner(stallTimeout: .milliseconds(400)) { update in
             var progress: Progress?
             let monitor = Task {
                 while !Task.isCancelled {
                     try await Task.sleep(for: .milliseconds(25))
-                    if let progress, progress.completedUnitCount > 0, progress.fractionCompleted < 1 {
+                    if let progress, progress.fractionCompleted > 0, progress.fractionCompleted < 1 {
                         sawBytesBeforeCompletion = true
                     }
                 }
             }
             defer { monitor.cancel() }
-            let (file, response) = try await ModelProvisioner.downloadBackupFile(from: source) { state in
+            let file = try await ModelProvisioner.downloadBackupFile(from: source, partial: partial, expectedSize: 2097152) { state in
                 if case .downloading(let value) = state { progress = value }
                 update(state)
             }
-            #expect((response as? HTTPURLResponse)?.statusCode == 200)
             #expect(try Data(contentsOf: file).count == 2097152)
             try? FileManager.default.removeItem(at: file)
             return source
@@ -288,5 +290,118 @@ struct ModelProvisionerTests {
         #expect(returned)
         pending?.resume(returning: URL(fileURLWithPath: "/test/model"))
         #expect(await task.value == nil)
+    }
+
+    @Test(arguments: ["failure", "cancel", "badRange", "fullResponse"])
+    func backupPersistsChunksAndResumesWithoutDuplicatingBytes(mode: String) async throws {
+        let server = try RangeDownloadServer(mode: mode)
+        defer { server.stop() }
+        let source = try await server.start()
+        let partial = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("model.partial")
+        defer { try? FileManager.default.removeItem(at: partial.deletingLastPathComponent()) }
+        let first = Task {
+            try await ModelProvisioner.downloadBackupFile(from: source, partial: partial,
+                                                          expectedSize: Int64(server.payload.count)) { _ in }
+        }
+        if mode == "cancel" {
+            for _ in 0..<500 {
+                if server.requests.withLock({ $0.count }) >= 2 { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(server.requests.withLock { $0.count } >= 2)
+            first.cancel()
+        }
+        let result = try? await first.value
+        if mode == "fullResponse" {
+            #expect(result == partial)
+        } else {
+            #expect(result == nil)
+            #expect(try partial.resourceValues(forKeys: [.fileSizeKey]).fileSize == 8 * 1024 * 1024)
+            var restoredProgress: Double?
+            let resumed = try await ModelProvisioner.downloadBackupFile(from: source, partial: partial,
+                                                                        expectedSize: Int64(server.payload.count)) { state in
+                if restoredProgress == nil, case .downloading(let progress?) = state {
+                    restoredProgress = progress.fractionCompleted
+                }
+            }
+            #expect(resumed == partial)
+            #expect(restoredProgress == 0.8)
+            #expect(server.requests.withLock { $0.last?.contains("Range: bytes=8388608-10485759") } == true)
+        }
+        #expect(try Data(contentsOf: partial) == server.payload)
+        #expect(server.requests.withLock { $0.first?.contains("Range: bytes=0-8388607") } == true)
+    }
+}
+
+private final class RangeDownloadServer: Sendable {
+    let listener: NWListener
+    let requests = Mutex<[String]>([])
+    let connections = Mutex<[NWConnection]>([])
+    let mode: String
+    let payload = Data(repeating: 42, count: 8 * 1024 * 1024) + Data(repeating: 43, count: 2 * 1024 * 1024)
+
+    init(mode: String) throws {
+        self.mode = mode
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        listener = try NWListener(using: parameters)
+    }
+
+    func start() async throws -> URL {
+        listener.newConnectionHandler = { [self] connection in
+            connections.withLock { $0.append(connection) }
+            connection.start(queue: .global())
+            receive(connection, collected: Data())
+        }
+        let port: NWEndpoint.Port = try await withCheckedThrowingContinuation { continuation in
+            listener.stateUpdateHandler = { [self] state in
+                switch state {
+                case .ready:
+                    if let port = listener.port { continuation.resume(returning: port) }
+                case .failed(let error): continuation.resume(throwing: error)
+                default: break
+                }
+            }
+            listener.start(queue: .global())
+        }
+        return URL(string: "http://127.0.0.1:\(port.rawValue)/model")!
+    }
+
+    private func receive(_ connection: NWConnection, collected: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [self] data, _, done, error in
+            let bytes = collected + (data ?? Data())
+            guard bytes.count < 16384, error == nil else { connection.cancel(); return }
+            let request = String(decoding: bytes, as: UTF8.self)
+            guard request.contains("\r\n\r\n") else {
+                if !done { receive(connection, collected: bytes) }
+                return
+            }
+            let index = requests.withLock { values in values.append(request); return values.count - 1 }
+            let isFirstChunk = request.contains("bytes=0-8388607")
+            let start = isFirstChunk ? 0 : 8388608
+            let end = isFirstChunk ? 8388607 : payload.count - 1
+            var body = payload.subdata(in: start..<(end + 1))
+            var status = "206 Partial Content"
+            var range = "Content-Range: bytes \(start)-\(end)/\(payload.count)\r\n"
+            if index == 1 {
+                switch mode {
+                case "failure": status = "503 Unavailable"; body = Data(); range = ""
+                case "badRange": range = "Content-Range: bytes 0-\(body.count - 1)/\(payload.count)\r\n"
+                case "fullResponse": status = "200 OK"; body = payload; range = ""
+                case "cancel": return // Keep this socket open until the client cancels.
+                default: break
+                }
+            }
+            let header = Data("HTTP/1.1 \(status)\r\nContent-Length: \(body.count)\r\n\(range)Connection: close\r\n\r\n".utf8)
+            connection.send(content: header + body, contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+
+    func stop() {
+        listener.cancel()
+        listener.newConnectionHandler = nil
+        listener.stateUpdateHandler = nil
+        connections.withLock { values in values.forEach { $0.cancel() }; values.removeAll() }
     }
 }

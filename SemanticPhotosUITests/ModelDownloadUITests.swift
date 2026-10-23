@@ -37,6 +37,21 @@ final class ModelDownloadUITests: XCTestCase {
     }
 
     @MainActor
+    func testConnectingCanRetryWithoutWaitingForTimeout() {
+        let app = XCUIApplication()
+        app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "retry"
+        app.launchArguments += ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["正在连接模型下载…"].waitForExistence(timeout: 15))
+        let retry = app.buttons["retryModelDownload"]
+        XCTAssertTrue(retry.isHittable)
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["模型准备失败"].waitForExistence(timeout: 10))
+        XCTAssertTrue(retry.isHittable)
+        app.terminate()
+    }
+
+    @MainActor
     func testFailureOffersRetryAndKeepsSearchBlocked() {
         let app = XCUIApplication()
         app.launchEnvironment["MODEL_DOWNLOAD_UI_TEST"] = "failed"

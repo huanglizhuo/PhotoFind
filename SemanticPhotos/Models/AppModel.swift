@@ -304,6 +304,16 @@ final class AppModel {
         #endif
     }
 
+    func retryModelPreparation() {
+        guard !isModelReady else { return }
+        let previous = modelPreparationTask
+        previous?.cancel()
+        Task {
+            await previous?.value
+            prepareModel()
+        }
+    }
+
     /// Download and validate before any inference or persisted queue is restored.
     func prepareModel() {
         guard modelPreparationTask == nil, !isModelReady else { return }
