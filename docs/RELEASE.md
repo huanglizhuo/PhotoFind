@@ -4,6 +4,50 @@ App Store Connect app: 6823997811. Bundle ID: com.clothpath.mondigital.
 Shipping targets: SemanticPhotos, SemanticPhotosShare, SemanticPhotosDownloader.
 The version and build number are shared in project.yml; CI overrides the build number for all targets.
 
+## Second startup rejection follow-up (23 October 2026)
+
+Review submission `d9eb0165-f5bb-4105-9fdb-d14630e896e6` rejected app 1.0 (7)
+on iPad Air 11-inch (M3), iPadOS 27.0.1. The screenshot shows "Connecting to the
+model download…" and the backup-server description. ASC currently reports model
+v2 accepted; this does not establish its availability at the time of review.
+
+Three defects were reproduced and corrected:
+- Checking and preparing states never expired under the previous watchdog.
+- Alternating download progress and reconnecting could repeatedly reset the
+  watchdog without receiving new data. Only a new progress high-water mark now
+  extends the deadline, and all preparation phases have a deadline.
+- The HTTPS fallback used async `URLSession.download` with a `didWriteData`
+  callback that did not report progress. A real Release simulator download
+  received 117,703,874 response bytes but was cancelled after 30.6 seconds as
+  "stalled". The task delegate now exposes the actual task's `Progress` through
+  `didCreateTask`. The watchdog observes `fractionCompleted`, because the task's
+  composite progress can advance while its `completedUnitCount` remains unchanged.
+
+The local HTTP regression streams 2 MiB over approximately 1.6 seconds, longer
+than its 400 ms stall deadline. It failed with the previous download callback,
+also failed when using the task's integer completed count, and passes with the
+final implementation. It uses loopback only, without Apple/R2 or a model fixture.
+The focused suite passed 13 test methods (including five stall phases):
+`build/Review8-HTTP-Green2.xcresult`. Failure evidence is in
+`build/Review8-HTTP-Red.xcresult` and `build/Review7-StallPhases-Red3.xcresult`.
+The final loopback-only revision also passed all 13 methods in
+`build/Review8-FinalProvisioner.xcresult`.
+
+A fresh iPad Air 11-inch (M3), iPadOS 26.5 simulator with no injected model
+completed the full Release-build HTTPS fallback in 125.162 seconds and reached
+photo selection. Independent readback confirmed 387,710,976 bytes and SHA-256
+`92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0`.
+Evidence: `build/review8-ipad-download-receipt.json` and
+`build/review8-ipad-download-complete.log`. This verifies a real transfer beyond
+the former 30-second failure point, not Apple-hosted distribution.
+
+These are confirmed defects, not proof of the exact reviewer-side sequence.
+No iPadOS 27 device is available. The installed 27.1 simulator runtime supports
+only iPhone Duo; an unsigned simulator build failed App Group validation during
+AssetPackManager initialization there, so it is not a valid distribution test.
+The user requested a TestFlight testing build first, with no review resubmission.
+Model bytes, model asset v2, R2 object, and the persisted index format are unchanged.
+
 ## R2 fallback release (21 October 2026)
 
 Apple-hosted delivery remains the first choice. On an Apple error or 30 seconds

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import SemanticPhotos
 
@@ -76,7 +77,7 @@ struct ModelProvisionerTests {
         #expect(backupCalls == 2)
     }
 
-    @Test(arguments: ["connecting", "downloading", "paused"])
+    @Test(arguments: ["checking", "connecting", "downloading", "paused", "preparing"])
     func stalledSystemRequestReturnsAndAllowsRetry(phase: String) async throws {
         var pending: CheckedContinuation<URL, Never>?
         var staleUpdate: (@MainActor @Sendable (ModelProvisioner.State) -> Void)?
@@ -88,6 +89,8 @@ struct ModelProvisionerTests {
             if calls == 1 {
                 staleUpdate = update
                 switch phase {
+                case "checking": update(.checking)
+                case "preparing": update(.preparing)
                 case "paused": update(.paused)
                 case "downloading": update(.downloading(Progress(totalUnitCount: 100)))
                 default: update(.downloading(nil))
@@ -194,6 +197,78 @@ struct ModelProvisionerTests {
             return url
         }
         #expect(await provisioner.prepare() == url)
+    }
+
+    @Test func reconnectingWithoutNewBytesStillUsesBackup() async {
+        let backup = URL(fileURLWithPath: "/backup/model")
+        let provisioner = ModelProvisioner(stallTimeout: .milliseconds(100), fallback: { _ in backup }) { update in
+            let progress = Progress(totalUnitCount: 100)
+            progress.completedUnitCount = 1
+            for _ in 0..<10 {
+                update(.downloading(progress))
+                try await Task.sleep(for: .milliseconds(40))
+                update(.downloading(nil))
+                try await Task.sleep(for: .milliseconds(40))
+            }
+            return URL(fileURLWithPath: "/apple/model")
+        }
+        #expect(await provisioner.prepare() == backup)
+    }
+
+    @Test func realHTTPDownloadReportsProgressAndSurvivesStallDeadline() async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        let listener = try NWListener(using: parameters)
+        defer { listener.cancel() }
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: .global())
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, _, _ in
+                Task {
+                    defer { connection.cancel() }
+                    let header = Data("HTTP/1.1 200 OK\r\nContent-Length: 2097152\r\nConnection: close\r\n\r\n".utf8)
+                    connection.send(content: header, completion: .idempotent)
+                    for _ in 0..<32 {
+                        connection.send(content: Data(repeating: 42, count: 65536), completion: .idempotent)
+                        try await Task.sleep(for: .milliseconds(50))
+                    }
+                }
+            }
+        }
+        let port: NWEndpoint.Port = try await withCheckedThrowingContinuation { continuation in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if let port = listener.port { continuation.resume(returning: port) }
+                case .failed(let error): continuation.resume(throwing: error)
+                default: break
+                }
+            }
+            listener.start(queue: .global())
+        }
+        let source = try #require(URL(string: "http://127.0.0.1:\(port.rawValue)/model"))
+        var sawBytesBeforeCompletion = false
+        let provisioner = ModelProvisioner(stallTimeout: .milliseconds(400)) { update in
+            var progress: Progress?
+            let monitor = Task {
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .milliseconds(25))
+                    if let progress, progress.completedUnitCount > 0, progress.fractionCompleted < 1 {
+                        sawBytesBeforeCompletion = true
+                    }
+                }
+            }
+            defer { monitor.cancel() }
+            let (file, response) = try await ModelProvisioner.downloadBackupFile(from: source) { state in
+                if case .downloading(let value) = state { progress = value }
+                update(state)
+            }
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(try Data(contentsOf: file).count == 2097152)
+            try? FileManager.default.removeItem(at: file)
+            return source
+        }
+        #expect(await provisioner.prepare() == source)
+        #expect(sawBytesBeforeCompletion)
     }
 
     @Test func cancellationDoesNotWaitForUnresponsiveSystemRequest() async throws {

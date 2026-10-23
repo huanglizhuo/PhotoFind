@@ -90,18 +90,19 @@ final class ModelProvisioner {
             }
         }
         let watchdog = Task {
-            var previous: Int64?
+            var furthestProgress = 0.0
             var lastActivity = ContinuousClock.now
             while !Task.isCancelled {
                 try await Task.sleep(for: min(stallTimeout / 4, .seconds(1)))
-                let completed: Int64? = switch state {
-                case .downloading(let progress): progress?.completedUnitCount ?? 0
-                case .paused: 0
-                default: nil
+                // URLSession's child progress can advance before completedUnitCount changes.
+                let completed: Double = switch state {
+                case .downloading(let progress): progress?.fractionCompleted ?? 0
+                default: 0
                 }
-                if completed == nil || completed != previous {
+                // Reconnecting or changing phases isn't evidence of new data.
+                if completed > furthestProgress {
                     lastActivity = .now
-                    previous = completed
+                    furthestProgress = completed
                 } else if lastActivity.duration(to: .now) >= stallTimeout {
                     continuation.finish(throwing: DownloadError.stalled)
                     return
@@ -126,6 +127,16 @@ final class ModelProvisioner {
             throw URLError(.notConnectedToInternet)
         }
         #endif
+        let (temporary, response) = try await downloadBackupFile(from: ModelFile.fallbackURL, update: update)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try Task.checkCancellation()
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        update(.preparing)
+        return try await prepareFile(from: temporary)
+    }
+
+    static func downloadBackupFile(from url: URL,
+                                   update: @escaping @MainActor @Sendable (State) -> Void) async throws -> (URL, URLResponse) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 3600
@@ -133,13 +144,7 @@ final class ModelProvisioner {
         defer { session.invalidateAndCancel() }
         let progress = Progress(totalUnitCount: ModelFile.expectedSize)
         update(.downloading(progress))
-        let (temporary, response) = try await session.download(from: ModelFile.fallbackURL,
-                                                               delegate: ModelDownloadProgress(progress: progress))
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        try Task.checkCancellation()
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        update(.preparing)
-        return try await prepareFile(from: temporary)
+        return try await session.download(from: url, delegate: ModelDownloadProgress(update: update))
     }
 
     private static func prepareFile(from source: URL) async throws -> URL {
@@ -230,16 +235,12 @@ final class ModelProvisioner {
     }
 }
 
-private final class ModelDownloadProgress: NSObject, URLSessionDownloadDelegate {
-    let progress: Progress
-    init(progress: Progress) { self.progress = progress }
+private final class ModelDownloadProgress: NSObject, URLSessionTaskDelegate {
+    let update: @MainActor @Sendable (ModelProvisioner.State) -> Void
+    init(update: @escaping @MainActor @Sendable (ModelProvisioner.State) -> Void) { self.update = update }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                    didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
-                    totalBytesExpectedToWrite: Int64) {
-        progress.completedUnitCount = totalBytesWritten
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        // Async downloads report progress on the task, not through didWriteData.
+        Task { @MainActor in update(.downloading(task.progress)) }
     }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                    didFinishDownloadingTo location: URL) {}
 }
